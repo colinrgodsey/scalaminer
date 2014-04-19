@@ -35,7 +35,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	def commandDelay = 2.millis
 	def defaultTimeout = identity.timeout
-	def maxUsbQueueSize = 200
+	def maxUsbQueueSize = 500
 
 	implicit def ec = context.system.dispatcher
 
@@ -67,6 +67,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	var usbCommandQueue: Map[Interface, Queue[USBHandler]] = Map.empty
 	var usbCommandTags: Map[Interface, String] = Map.empty
+	var usbCommandTagStats: Map[(Interface, String), Int] = Map.empty
 	var usbCommandExecuting: Set[Interface] = Set.empty
 
 	device.addUsbDeviceListener(devListener)
@@ -90,12 +91,15 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	//tag commands for debugging
 	def usbCommandInfo(interface: Interface, name: String)(f: => Unit) {
+		val key = (interface, name)
+		usbCommandTagStats += key -> (usbCommandTagStats.getOrElse(key, 0) + 1)
 		addUsbCommandToQueue(interface, ({ () =>
 			usbCommandTags += interface -> name
 		}, NoWait))
 		f
 		addUsbCommandToQueue(interface, ({ () =>
 			usbCommandTags -= interface
+			usbCommandTagStats += key -> (usbCommandTagStats.getOrElse(key, 0) - 1)
 		}, NoWait))
 	}
 
@@ -209,12 +213,11 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 			endpoint = iface.getUsbEndpoint(endpointDesc.ep)
 			pipe = endpoint.getUsbPipe
 			_ = {
-				pipe.addUsbPipeListener(pipeListener)
-
  				if(!openedIfaces(iface)) iface.claim(new UsbInterfacePolicy() {
 				    override def forceClaim(usbInterface: UsbInterface): Boolean = true
 			    })
-				//endpoint.getUsbEndpointDescriptor
+
+				pipe.addUsbPipeListener(pipeListener)
 
 				openedPipes += pipe
 				openedIfaces += iface
@@ -452,6 +455,8 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		super.postStop()
 
 		devListener.dead = true
+
+		log.warning("Cmd stats " + usbCommandTagStats)
 
 		//TODO: .... not too happy about this
 		scala.concurrent.blocking(Thread.sleep(100))

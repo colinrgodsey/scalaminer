@@ -34,7 +34,8 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 	def isDualIface0 = false //false(1) for LTC only, otherwise true(0)
 	def identity = DualMiner.DM
 
-	def nonceTimeout = 35.seconds
+	def nonceTimeout = 5.seconds
+	override def defaultTimeout = 8.seconds
 
 	val defaultReadSize: Int = 512
 
@@ -72,51 +73,48 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 		device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_LOW, 0)
 	)
 
-	def getNonce(work: Work, job: Stratum.Job, timeout: FiniteDuration) {
-		//object CancelNonce extends ContextualCommand
-		//object TryRead extends ContextualCommand
+	def getNonce(work: Work, job: Stratum.Job) {
 
-		//context.system.scheduler.scheduleOnce(timeout, self, CancelNonce)
-		//context.system.scheduler.scheduleOnce(2.millis, self, TryRead)
+		object TimedOut
 
-		/*var buffer = Vector[Byte]()
+		val eps = endpointsForIface(nonceInterface)
 
-		def tryRead() {
-			readData(nonceInterface) { read =>
-				buffer ++= read
+		val (ep, pipe) = eps.filter(_._1.isInput).head
+
+		lazy val timeoutTime = context.system.scheduler.scheduleOnce(
+			nonceTimeout, self, TimedOut)
+
+		var buffer = ByteString.empty
+
+		addUsbCommandToQueue(nonceInterface, ({ () =>
+			timeoutTime.isCancelled
+			pipe.asyncSubmit(defaultReadBuffer)
+		}, {
+			case AbstractMiner.CancelWork =>
+				timeoutTime.cancel()
+				self ! StartWork
+				true
+			case TimedOut =>
+				//onReadTimeout()
+				timedOut += 1
+				self ! StartWork
+				true
+			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
+				val dat = if(isFTDI) {
+					x.getData.drop(2)
+				} else x.getData
+
+				buffer ++= dat
+
 				if(buffer.length >= 4) {
-					log.debug("Results " + buffer.take(4).toList)
+					timeoutTime.cancel()
 					self ! (Nonce(work, buffer.take(4)) -> job)
-					context.unbecome()
-					unstashAll()
-				} else
-					context.system.scheduler.scheduleOnce(2.millis, self, TryRead)
-			}
-		}
-
-		context.become(({
-			case TryRead => tryRead()
-			case CancelNonce =>
-				timedOut += 1
-				self ! StartWork
-				context.unbecome()
-				unstashAll()
-			case x: MiningJob =>
-				workReceive(x)
-				self ! StartWork
-				context.unbecome()
-				unstashAll()
-		}: Receive) orElse workReceive orElse {
-			case _ => stash()
-		}, discardOld = false)*/
-
-		readDataUntilLength(nonceInterface, 4, nonceTimeout * 2,
-				softFailTimeout = Some(nonceTimeout)) { dat =>
-			if(dat.isEmpty) {
-				timedOut += 1
-				self ! StartWork
-			} else self ! (Nonce(work, dat) -> job)
-		}
+					true
+				} else {
+					pipe.asyncSubmit(defaultReadBuffer)
+					false
+				}
+		}))
 	}
 
 	def normal: Actor.Receive = usbBaseReceive orElse workReceive orElse {
@@ -227,7 +225,7 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 
 			sendDataCommands(miningInterface, initCmds)()
 			sendDataCommand(nonceInterface, cmd)()
-			getNonce(work, job, nonceTimeout)
+			getNonce(work, job)
 
 	}
 

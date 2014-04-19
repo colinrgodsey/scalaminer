@@ -62,6 +62,8 @@ class StratumProxy(stratumRef: ActorRef) extends Actor with AbstractMiner with H
 	stratumSubscribe(stratumRef)
 
 	def proxyReceive: Receive = {
+		case AbstractMiner.CancelWork =>
+
 		case GetWork(needsMidstate) =>
 			workStarted += 1
 			getWorkJson(needsMidstate) pipeTo sender

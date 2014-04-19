@@ -14,6 +14,12 @@ import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import com.colingodsey.scalaminer.utils._
 import scala.concurrent.Future
 
+object AbstractMiner {
+	sealed trait Commands
+
+	case object CancelWork extends Commands
+}
+
 trait AbstractMiner extends Actor with ActorLogging with Stash {
 	implicit def system = context.system
 	implicit def to = Timeout(10.seconds + (5000 * math.random).millis)
@@ -83,7 +89,9 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			log.info("New target " + targetBytes.map(
 				"%02x" format _).mkString + " diff " + difficulty)
 		case x: Stratum.ExtraNonce => extraNonceInfo = Some(x)
-		case x: MiningJob => miningJob = Some(x)
+		case x: MiningJob =>
+			miningJob = Some(x)
+			self ! AbstractMiner.CancelWork
 	}
 
 	def getWork(needsMidstate: Boolean) = for {

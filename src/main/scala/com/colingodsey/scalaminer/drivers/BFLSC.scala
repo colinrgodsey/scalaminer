@@ -60,16 +60,16 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
 	)
 
-	val calcTimer = context.system.scheduler.schedule(1.seconds, 3.seconds, self, CalcStats)
-	val jTimeoutTimer = context.system.scheduler.schedule(
-		1.seconds, 45.seconds, self, JobTimeouts)
-
 	var workSubmitted = 0
 	//var inProcess = 0
 	var midstateToJobMap: Map[Seq[Byte], Stratum.Job] = Map.empty
 	var resultTimer: Option[Cancellable] = None
 
-	stratumSubscribe(stratumRef)
+	var temp1 = 1.0
+	var temp2 = 1.0
+	var overHeating = false
+
+	def curMaxTemp = math.max(temp1, temp2)
 
 	def maybeStartResultsTimer() = {
 		if(resultTimer == None)
@@ -101,6 +101,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	}
 
 	def queueJob(job: BFLFullRangeJob)(after: => Unit) {
+		flushRead(miningInterface)
 		usbCommandInfo(miningInterface, "queueJob") {
 			sendDataCommand(miningInterface, QJOB.getBytes)()
 			readLine(miningInterface) { line =>
@@ -160,9 +161,8 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 
 	def flushWork(after: => Unit) = {
 		maybeStartResultsTimer()
-		workSubmitted = 0
 		//QFLUSH
-		//flushRead(miningInterface)
+		flushRead(miningInterface)
 		usbCommandInfo(miningInterface, "flushWork") {
 			sendDataCommand(miningInterface, QFLUSH.getBytes)()
 			readLine(miningInterface, softFailTimeout = Some(1.second),
@@ -172,11 +172,14 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 				else {
 					val flushed = line.split(" ")(1).toInt
 					log.info("Flushed " + flushed)
+					workSubmitted = 0
 				}
 				after ==()
 				true
 			}
 			flushRead(miningInterface)
+
+			sendDataCommand(miningInterface, QRES.getBytes)()
 		}
 	}
 
@@ -206,7 +209,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	}
 
 	//NOTE: this will call the timer again
-	def getResults() = usbCommandInfo(miningInterface, "getResults") {
+	def getResults() = if(!overHeating) usbCommandInfo(miningInterface, "getResults") {
 		if(workSubmitted < maxWorkQueue) {
 			val n = maxWorkQueue - workSubmitted
 			0.until(n).foreach(_ => {
@@ -265,17 +268,62 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 		}
 	}
 
-	case class ExpireJobs(set: Set[Seq[Byte]])
+	def setFan(max: Boolean) {
+		usbCommandInfo(miningInterface, "setFan") {
+			if(max) sendDataCommand(miningInterface, FAN4.getBytes)()
+			else sendDataCommand(miningInterface, FANAUTO.getBytes)()
+			readLine(miningInterface) { line =>
+				log.info("fan resp " + line)
+				true
+			}
+		}
+	}
 
-	def normal: Receive = usbBaseReceive orElse ({
-		case x: MiningJob =>
+	def checkTemp() {
+		flushRead(miningInterface)
+		usbCommandInfo(miningInterface, "checkTemp") {
+			sendDataCommand(miningInterface, TEMPERATURE.getBytes)()
+			readLine(miningInterface) { lines1 =>
+				try {
+					val ts = lines1.split(",").map(x => x.split(":")(1).trim)
+
+					temp1 += ts(0).toInt * 0.63
+					temp1 /= 1.63
+					temp2 += ts(1).toInt * 0.63
+					temp2 /= 1.63
+				} catch {
+					case x: Throwable =>
+						log.error(x, "failed parsing temp " + lines1)
+				}
+
+				if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
+					overHeating = true
+					log.warning("Overheating! Pausing work")
+					setFan(true)
+					flushWork()
+				}
+
+				if(overHeating && (curMaxTemp + TEMP_RECOVER) < TEMP_OVERHEAT) {
+					log.warning("Cooled down. Resuming work")
+					overHeating = false
+					setFan(false)
+				}
+
+				log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
+
+				true
+			}
+		}
+	}
+
+	def normal: Receive = usbBaseReceive orElse workReceive orElse {
+		case AbstractMiner.CancelWork =>
 			//flush old work here
 			if(workSubmitted > 0) flushWork()
-			workReceive(x)
-	}: Receive) orElse workReceive orElse {
 		case GetResults =>
 			getResults
 			resultTimer = None
+		case CheckTemp => checkTemp()
 		case CalcStats => log.info(minerStats.toString)
 		case ExpireJobs(set) =>
 			if(!set.isEmpty) {
@@ -346,12 +394,18 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	override def preStart() {
 		super.preStart()
 
+		context.system.scheduler.schedule(1.seconds, 3.seconds, self, CalcStats)
+		context.system.scheduler.schedule(1.seconds, 1.seconds, self, CheckTemp)
+		context.system.scheduler.schedule(
+			1.seconds, 45.seconds, self, JobTimeouts)
+
+		stratumSubscribe(stratumRef)
+
 		self ! Start
 	}
 
 	override def postStop() {
 		super.postStop()
-		calcTimer.cancel()
 
 		context stop self
 	}
@@ -370,6 +424,8 @@ object BFLSC extends USBDeviceDriver {
 	case object GetResults extends BFLSCCommand
 	case object AddWork extends BFLSCCommand
 	case object JobTimeouts extends BFLSCCommand
+	case object CheckTemp extends BFLSCCommand
+	case class ExpireJobs(set: Set[Seq[Byte]]) extends BFLSCCommand
 
 	val bflTimeout = 100.millis
 

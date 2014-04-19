@@ -225,7 +225,7 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 			val initCmds = if(isDualIface0) Constants.ltc_init
 			else Constants.ltc_restart
 
-			sendDataCommands(miningInterface, initCmds.map(_.fromHex))()
+			sendDataCommands(miningInterface, initCmds)()
 			sendDataCommand(nonceInterface, cmd)()
 			getNonce(work, job, nonceTimeout)
 
@@ -247,9 +247,9 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 				Constants.pll_freq_550M_cmd
 			else Constants.pll_freq_850M_cmd
 
-			sendCommands(interfaceA, runCommand) {
+			sendDataCommands(interfaceA, runCommand) {
 				if(isDualIface0)
-					sendCommands(interfaceA, Constants.btc_open_nonce_unit) {
+					sendDataCommands(interfaceA, Constants.btc_open_nonce_unit) {
 						detect()
 					}
 				else detect()
@@ -305,12 +305,14 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 					runIrps(initIrps2) { _ =>
 						sleep(2.millis) {
 							val cmds = if(isDualIface0) {
-								sendCommands(interfaceA,
+								sendDataCommands(interfaceA,
 										Constants.btc_gating ++ Constants.btc_init) {
-									sendCommands(interfaceB, Constants.ltc_init)(getCTSSetFreq)
+									sendDataCommands(interfaceB,
+										Constants.ltc_init)(getCTSSetFreq)
 								}
 							} else {
-								sendCommands(interfaceA, Constants.ltc_only_init)(getCTSSetFreq)
+								sendDataCommands(interfaceA,
+									Constants.ltc_only_init)(getCTSSetFreq)
 							}
 						}
 					}
@@ -393,102 +395,78 @@ case object DualMiner extends USBDeviceDriver {
 	
 	object Constants {
 		val pll_freq_1200M_cmd = Seq(
-		
 			"55AAEF000500E085",
-			"55AA0FFFB02800C0",
-			""
-		)
+			"55AA0FFFB02800C0"
+		).map(_.fromHex)
 
 		val pll_freq_1100M_cmd = Seq(
-		
 			"55AAEF0005006085",
-			"55AA0FFF4C2500C0",
-			""
-		)
+			"55AA0FFF4C2500C0"
+		).map(_.fromHex)
 
 		val pll_freq_1000M_cmd = Seq(
-		
 			"55AAEF000500E084",
-			"55AA0FFFE82100C0",
-			""
-		)
+			"55AA0FFFE82100C0"
+		).map(_.fromHex)
 
 		val pll_freq_950M_cmd = Seq(
-		
 			"55AAEF000500A084",
-			"55AA0FFF362000C0",
-			""
-		)
+			"55AA0FFF362000C0"
+		).map(_.fromHex)
 
 		val pll_freq_900M_cmd = Seq(
-		
 			"55AAEF0005006084",
-			"55AA0FFF841E00C0",
-			""
-		)
+			"55AA0FFF841E00C0"
+		).map(_.fromHex)
 
 		val pll_freq_850M_cmd = Seq(
-		
 			"55AAEF0005002084",
-			"55AA0FFFD21C00C0",
-			""
-		)
+			"55AA0FFFD21C00C0"
+		).map(_.fromHex)
 
 		val pll_freq_800M_cmd = Seq(
-		
 			"55AAEF000500E083",
-			"55AA0FFF201B00C0",
-			""
-		)
+			"55AA0FFF201B00C0"
+		).map(_.fromHex)
 
 		val pll_freq_750M_cmd = Seq(
-		
 			"55AAEF000500A083",
-			"55AA0FFF6E1900C0",
-			""
-		)
+			"55AA0FFF6E1900C0"
+		).map(_.fromHex)
 
 		val pll_freq_700M_cmd = Seq(
-		
 			"55AAEF0005006083",
-			"55AA0FFFBC1700C0",
-			""
-		)
+			"55AA0FFFBC1700C0"
+		).map(_.fromHex)
 
 		val pll_freq_650M_cmd = Seq(
-		
 			"55AAEF0005002083",
-			"55AA0FFF0A1600C0",
-			""
-		)
+			"55AA0FFF0A1600C0"
+		).map(_.fromHex)
 
 		val pll_freq_600M_cmd = Seq(
 		
 			"55AAEF000500E082",
-			"55AA0FFF581400C0",
-			""
-		)
+			"55AA0FFF581400C0"
+		).map(_.fromHex)
 
 		val pll_freq_550M_cmd = Seq(
 		
 			"55AAEF000500A082",
-			"55AA0FFFA61200C0",
-			""
-		)
+			"55AA0FFFA61200C0"
+		).map(_.fromHex)
 
 		val pll_freq_500M_cmd = Seq(
 		
 			"55AAEF0005006082",
-			"55AA0FFFF41000C0",
-			""
-		)
+			"55AA0FFFF41000C0"
+		).map(_.fromHex)
 
 		val pll_freq_400M_cmd = Seq(
 		
 			"55AAEF000500E081",
-			"55AA0FFF900D00C0",
-			""
-		)
+			"55AA0FFF900D00C0"
+		).map(_.fromHex)
 
 		val btc_gating = Seq(
 		
@@ -496,9 +474,8 @@ case object DualMiner extends USBDeviceDriver {
 			"55AAEF0300000000",
 			"55AAEF0400000000",
 			"55AAEF0500000000",
-			"55AAEF0600000000",
-			""
-		)
+			"55AAEF0600000000"
+		).map(_.fromHex)
 
 		val btc_single_open = Seq(
 		
@@ -661,9 +638,8 @@ case object DualMiner extends USBDeviceDriver {
 			"55AAEF061FFFFFFF",
 			"55AAEF063FFFFFFF",
 			"55AAEF067FFFFFFF",
-			"55AAEF06FFFFFFFF",
-			""
-		)
+			"55AAEF06FFFFFFFF"
+		).map(_.fromHex)
 
 		val ltc_only_init = Seq(
 		
@@ -677,44 +653,38 @@ case object DualMiner extends USBDeviceDriver {
 			"55AA1F2813000000",
 			//850M
 			"55AAEF0005002084",
-			"55AA0FFFD21C00C0",
+			"55AA0FFFD21C00C0"
 			//800M
 			//"55AAEF000500E083",
 			//"55AA0FFF201B00C0",
-			""
-		)
+		).map(_.fromHex)
 
 		val ltc_restart = Seq(
 		
 			"55AA1F2810000000",
-			"55AA1F2813000000",
-			""
-		)
+			"55AA1F2813000000"
+		).map(_.fromHex)
 
 		val btc_init = Seq(
 		
 			"55AAEF3020000000",
-			"55AA1F2817000000",
-			""
-		)
+			"55AA1F2817000000"
+		).map(_.fromHex)
 
 		val ltc_init = Seq(
 		
 			"55AA1F2814000000",
-			"55AA1F2817000000",
-			""
-		)
+			"55AA1F2817000000"
+		).map(_.fromHex)
 
 		val btc_open_nonce_unit = Seq(
 		
-			"55AAEF0204000000",
-			""
-		)
+			"55AAEF0204000000"
+		).map(_.fromHex)
 
 		val btc_close_nonce_unit = Seq(
 		
-			"55AAEF0200000000",
-			""
+			"55AAEF0200000000"
 		)
 
 		//needs padding to 64?

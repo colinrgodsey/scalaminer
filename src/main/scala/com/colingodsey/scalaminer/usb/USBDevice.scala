@@ -73,6 +73,11 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	def usbBaseReceive = usbCommandReceive orElse usbErrorReceive
 
+	def onReadTimeout() {
+		log.error("Read data timeout!")
+		context stop self
+	}
+
 	def usbErrorReceive: Actor.Receive = {
 		case x: UsbDeviceErrorEvent =>
 			throw x.getUsbException
@@ -114,6 +119,12 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 			val head = q.head
 
 			head._1()
+
+			if(head._2 == NoWait) {
+				usbCommandQueue += interface -> q.tail
+				usbCommandExecuting -= interface
+				maybeExecuteUsbCommand(interface)
+			}
 		}
 	}
 
@@ -282,12 +293,14 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	//recv returns true if its done reading
 	def readLine(interface: Interface,
-			timeout: FiniteDuration = defaultTimeout)(recv: String => Boolean) =
-		readDataUntilByte(interface, '\n'.toByte) { bytes =>
+			timeout: FiniteDuration = defaultTimeout,
+			softFailTimeout: Option[FiniteDuration] = None)(recv: String => Boolean) = {
+		readDataUntilByte(interface, '\n'.toByte, timeout, softFailTimeout) { bytes =>
 			val str = new String(bytes.toArray, "ASCII")
 
 			recv(str)
 		}
+	}
 
 	def readDataUntilLength(interface: Interface, len: Int,
 			timeout: FiniteDuration = defaultTimeout,
@@ -320,14 +333,19 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	}
 
 	def readDataUntilByte(interface: Interface, byte: Byte,
-			timeout: FiniteDuration = defaultTimeout)(
+			timeout: FiniteDuration = defaultTimeout,
+			softFailTimeout: Option[FiniteDuration] = None)(
 			recv: (IndexedSeq[Byte]) => Boolean) {
+		val softDeadline = softFailTimeout.map(Deadline.now + _)
 		var buffer = ScalaMiner.BufferType.empty
 
 		def procSome(dat: Seq[Byte]): Boolean = {
 			buffer ++= dat
 			val idx = buffer indexOf byte
-			if(idx != -1) {
+			if(softDeadline.map(_.isOverdue()).getOrElse(false)) {
+				recv(IndexedSeq.empty)
+				true
+			} else if(idx != -1) {
 				val (left, right0) = buffer splitAt idx
 				val right = right0 drop 1
 
@@ -366,8 +384,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 			pipe.asyncSubmit(defaultReadBuffer)
 		}, {
 			case TimedOut =>
-				log.error("Read data timeout!")
-				context stop self
+				onReadTimeout()
 				true
 			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
 				val dat = if(isFTDI) {

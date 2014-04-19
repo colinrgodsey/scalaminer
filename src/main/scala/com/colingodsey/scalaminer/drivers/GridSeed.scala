@@ -5,6 +5,7 @@ import akka.actor._
 import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer._
 import scala.concurrent.duration._
+import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.usb.USBManager.{OutputEndpoint, InputEndpoint, Interface}
 
 case object GridSeed extends USBDeviceDriver {
@@ -14,30 +15,33 @@ case object GridSeed extends USBDeviceDriver {
 
 	val gsTimeout = 100.millis
 
-	val MINER_THREADS = 1
-	val LATENCY = 4
+	object Constants {
+		val MINER_THREADS = 1
+		val LATENCY = 4
 
-	val DEFAULT_BAUD = 115200
-	val DEFAULT_FREQUENCY = 750
-	val DEFAULT_CHIPS = 5
-	val DEFAULT_USEFIFO = 0
-	val DEFAULT_BTCORE = 16
+		val DEFAULT_BAUD = 115200
+		val DEFAULT_FREQUENCY = 750
+		val DEFAULT_CHIPS = 5
+		val DEFAULT_USEFIFO = 0
+		val DEFAULT_BTCORE = 16
 
-	val COMMAND_DELAY = 20
-	val READ_SIZE = 12
-	val MCU_QUEUE_LEN = 0
-	val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN+2)
-	val READBUF_SIZE = 8192
-	val HASH_SPEED = 0.0851128926.millis  // in ms
-	val F_IN = 25  // input frequency
+		val COMMAND_DELAY = 20
+		val READ_SIZE = 12
+		val MCU_QUEUE_LEN = 0
+		val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN + 2)
+		val READBUF_SIZE = 8192
+		val HASH_SPEED = 0.0851128926.millis
+		// in ms
+		val F_IN = 25 // input frequency
 
-	val PROXY_PORT = 3350
+		val PROXY_PORT = 3350
 
-	val PERIPH_BASE = 0x40000000
-	val APB2PERIPH_BASE = (PERIPH_BASE + 0x10000)
-	val GPIOA_BASE = (APB2PERIPH_BASE + 0x0800)
-	val CRL_OFFSET = 0x00
-	val ODR_OFFSET = 0x0c
+		val PERIPH_BASE = 0x40000000
+		val APB2PERIPH_BASE = (PERIPH_BASE + 0x10000)
+		val GPIOA_BASE = (APB2PERIPH_BASE + 0x0800)
+		val CRL_OFFSET = 0x00
+		val ODR_OFFSET = 0x0c
+	}
 
 	val detectBytes = BigInt("55aac000909090900000000001000000",
 		16).toByteArray.toIndexedSeq
@@ -117,6 +121,81 @@ case object GridSeed extends USBDeviceDriver {
 
 	val identities: Set[USBIdentity] = Set(GSD, GSD1, GSD2, GSD3)
 
+	val binFrequency = Seq(
+		"55aaef0005006083",
+		"55aaef000500038e",
+		"55aaef0005000187",
+		"55aaef000500438e",
+		"55aaef0005008083",
+		"55aaef000500838e",
+		"55aaef0005004187",
+		"55aaef000500c38e",
+
+		"55aaef000500a083",
+		"55aaef000500038f",
+		"55aaef0005008187",
+		"55aaef000500438f",
+		"55aaef000500c083",
+		"55aaef000500838f",
+		"55aaef000500c187",
+		"55aaef000500c38f",
+
+		"55aaef000500e083",
+		"55aaef0005000188",
+		"55aaef0005000084",
+		"55aaef0005004188",
+		"55aaef0005002084",
+		"55aaef0005008188",
+		"55aaef0005004084",
+		"55aaef000500c188",
+
+		"55aaef0005006084",
+		"55aaef0005000189",
+		"55aaef0005008084",
+		"55aaef0005004189",
+		"55aaef000500a084",
+		"55aaef0005008189",
+		"55aaef000500c084",
+		"55aaef000500c189",
+
+		"55aaef000500e084",
+		"55aaef000500018a",
+		"55aaef0005000085",
+		"55aaef000500418a",
+		"55aaef0005002085",
+		"55aaef000500818a",
+		"55aaef0005004085",
+		"55aaef000500c18a",
+
+		"55aaef0005006085",
+		"55aaef000500018b",
+		"55aaef0005008085",
+		"55aaef000500418b",
+		"55aaef000500a085",
+		"55aaef000500818b",
+		"55aaef000500c085",
+		"55aaef000500c18b",
+
+		"55aaef000500e085",
+		"55aaef000500018c",
+		"55aaef0005000086",
+		"55aaef000500418c",
+		"55aaef0005002086",
+		"55aaef000500818c",
+		"55aaef0005004086",
+		"55aaef000500c18c",
+
+		"55aaef0005006086",
+		"55aaef000500018d",
+		"55aaef0005008086",
+		"55aaef000500418d",
+		"55aaef000500a086",
+		"55aaef000500818d",
+		"55aaef000500c086",
+		"55aaef000500c18d",
+
+		"55aaef000500e086"
+	).map(_.fromHex)
 }
 
 class GSD3Device(val device: UsbDevice) extends PL2303Device {
@@ -133,6 +212,23 @@ class GSD3Device(val device: UsbDevice) extends PL2303Device {
 	}
 
 
+}
+
+trait GridSeedFTDI extends USBDeviceActor {
+	import FTDI._
+	import GridSeed._
+	import Constants._
+
+	override def isFTDI = true
+
+	override def commandDelay = 2.millis
+	override def defaultTimeout = 100.seconds
+
+	def jobTimeout = 5.minutes
+	val defaultReadSize: Int = 0x2000 // ?
+
+	val pollDelay = 10.millis
+	val maxWorkQueue = 15
 }
 
 trait PL2303Device extends USBDeviceActor {

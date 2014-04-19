@@ -24,6 +24,7 @@ import com.colingodsey.scalaminer.utils._
 import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.{InputEndpoint, OutputEndpoint, Interface}
+import scala.concurrent.Future
 
 class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdentity)
 		extends AbstractMiner with USBDeviceActor {
@@ -34,7 +35,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	override def isFTDI = true
 
 	override def commandDelay = 2.millis
-	override def defaultTimeout = 100.seconds
+	override def defaultTimeout = 2.seconds
 
 	def jobTimeout = 5.minutes
 	val defaultReadSize: Int = 0x2000 // ?
@@ -66,15 +67,19 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	var workSubmitted = 0
 	//var inProcess = 0
 	var midstateToJobMap: Map[Seq[Byte], Stratum.Job] = Map.empty
+	var resultTimer: Option[Cancellable] = None
 
 	stratumSubscribe(stratumRef)
 
-	def startResultsTimer() = context.system.scheduler.scheduleOnce(
-		pollDelay, self, GetResults)
+	def maybeStartResultsTimer() = {
+		if(resultTimer == None)
+			resultTimer = Some apply context.system.scheduler.scheduleOnce(
+				pollDelay, self, GetResults)
+	}
 
 	def getInfo(cb: => Unit) {
 		usbCommandInfo(miningInterface, "getInfo") {
-			flushRead(miningInterface)
+			//flushRead(miningInterface)
 			sendDataCommand(miningInterface, DETAILS.getBytes)()
 			readLinesUntil(miningInterface, "OK") { lines =>
 				val info = BFLInfo(lines)
@@ -86,7 +91,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 
 	def identify(cb: => Unit) {
 		usbCommandInfo(miningInterface, "identity") {
-			flushRead(miningInterface)
+			//flushRead(miningInterface)
 			sendDataCommand(miningInterface, IDENTIFY.getBytes)()
 			readLine(miningInterface) { line =>
 				log.info(line)
@@ -145,21 +150,34 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 		}
 	}
 
-	def flushWork(after: => Unit) = usbCommandInfo(miningInterface, "flushWork") {
+	override def onReadTimeout() {
+		log.error("Read data timeout! " + usbCommandTags)
+		if(workSubmitted <= 0) context stop self
+		maybeStartResultsTimer()
+		flushRead(miningInterface)
+		workSubmitted = 0
+	}
+
+	def flushWork(after: => Unit) = {
+		maybeStartResultsTimer()
 		workSubmitted = 0
 		//QFLUSH
-		flushRead(miningInterface)
-		sendDataCommand(miningInterface, QFLUSH.getBytes)()
-		readLine(miningInterface) { line =>
-			if(line.substring(0, 2) != "OK") log.warning("Flush failed with " + line)
-			else {
-				val flushed = line.split(" ")(1).toInt
-				log.info("Flushed " + flushed)
+		//flushRead(miningInterface)
+		usbCommandInfo(miningInterface, "flushWork") {
+			sendDataCommand(miningInterface, QFLUSH.getBytes)()
+			readLine(miningInterface, softFailTimeout = Some(1.second),
+				timeout = 3.seconds) { line =>
+				if(line == "" || line.substring(0, 2) != "OK")
+					log.warning("Flush failed with " + line)
+				else {
+					val flushed = line.split(" ")(1).toInt
+					log.info("Flushed " + flushed)
+				}
+				after ==()
+				true
 			}
-			after == ()
-			true
+			flushRead(miningInterface)
 		}
-
 	}
 
 	//might never fire after
@@ -230,37 +248,51 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 					flushWork()
 			}
 
-			startResultsTimer()
+			maybeStartResultsTimer()
 		}
 	}
 
 	def doInit() {
 		runIrps(initIrps) { _ =>
-			identify(getInfo {
-				flushWork()
+			//flushRead(miningInterface)
+			identify()
+			getInfo {
+				//flushWork()
 				context become normal
 				unstashAll()
-				startResultsTimer()
-			})
+				maybeStartResultsTimer()
+			}
 		}
 	}
+
+	case class ExpireJobs(set: Set[Seq[Byte]])
 
 	def normal: Receive = usbBaseReceive orElse ({
 		case x: MiningJob =>
 			//flush old work here
-			flushWork()
+			if(workSubmitted > 0) flushWork()
 			workReceive(x)
 	}: Receive) orElse workReceive orElse {
-		case GetResults => getResults
+		case GetResults =>
+			getResults
+			resultTimer = None
 		case CalcStats => log.info(minerStats.toString)
-		case JobTimeouts =>
-			val expired = midstateToJobMap.filter(_._2.runningFor > jobTimeout)
-
-			if(!expired.isEmpty) {
-				log.warning(expired.size + " jobs timed out")
-				midstateToJobMap --= expired.keySet
-				timedOut += expired.size
+		case ExpireJobs(set) =>
+			if(!set.isEmpty) {
+				val preSize = midstateToJobMap.size
+				midstateToJobMap --= set
+				val n = preSize - midstateToJobMap.size
+				log.warning(n + " jobs timed out")
+				timedOut += n
 			}
+		case JobTimeouts =>
+			val jobMap = midstateToJobMap
+
+			Future {
+				val expired = jobMap.filter(_._2.runningFor > jobTimeout)
+
+				ExpireJobs(expired.keySet)
+			} pipeTo self
 		case AddWork => addWork()
 		case BFLWorkResult(midstate, blockData, nonce0) =>
 			val nonce = nonce0.reverse

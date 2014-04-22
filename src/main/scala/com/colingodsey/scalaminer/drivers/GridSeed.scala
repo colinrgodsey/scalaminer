@@ -17,7 +17,7 @@ case object GridSeed extends USBDeviceDriver {
 
 	object Constants {
 		val MINER_THREADS = 1
-		val LATENCY = 4
+		val LATENCY = 4.toShort
 
 		val DEFAULT_BAUD = 115200
 		val DEFAULT_FREQUENCY = 750
@@ -55,13 +55,16 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
+		def isMultiCoin = true
+
 		val interfaces = Set(Interface(0, Set(
 			//Endpoint(UsbConst.ENDPOINT_TYPE_INTERRUPT, 8, epi(2), 0, false),
 			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props = ???
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
 	case object GSD1 extends USBIdentity {
@@ -79,7 +82,8 @@ case object GridSeed extends USBDeviceDriver {
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props = ???
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
 	case object GSD2 extends USBIdentity {
@@ -97,7 +101,8 @@ case object GridSeed extends USBDeviceDriver {
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props = ???
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
 	case object GSD3 extends USBIdentity {
@@ -115,11 +120,14 @@ case object GridSeed extends USBDeviceDriver {
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props =
+		def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[GSD3Device], device)
 	}
 
 	val identities: Set[USBIdentity] = Set(GSD, GSD1, GSD2, GSD3)
+
+	val detectCmd = "55aac000909090900000000001000000".fromHex
 
 	val binFrequency = Seq(
 		"55aaef0005006083",
@@ -214,7 +222,8 @@ class GSD3Device(val device: UsbDevice) extends PL2303Device {
 
 }
 
-trait GridSeedFTDI extends USBDeviceActor {
+abstract class GridSeedFTDIMiner(val device: UsbDevice, stratumRef: ActorRef,
+		val identity: USBIdentity) extends USBDeviceActor with AbstractMiner {
 	import FTDI._
 	import GridSeed._
 	import Constants._
@@ -229,6 +238,20 @@ trait GridSeedFTDI extends USBDeviceActor {
 
 	val pollDelay = 10.millis
 	val maxWorkQueue = 15
+
+	def controlIndex = 0.toShort
+
+	val initIrps = List(
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_LATENCY, LATENCY, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_AVA, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_AVA,
+			((INDEX_BAUD_AVA & 0xff00) | controlIndex).toShort),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex),
+		device.createUsbControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex)
+	)
 }
 
 trait PL2303Device extends USBDeviceActor {

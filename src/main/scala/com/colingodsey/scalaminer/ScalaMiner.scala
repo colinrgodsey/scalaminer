@@ -52,6 +52,13 @@ object ScalaMinerMain extends App {
 	usbManager ! USBManager.AddStratumRef(ScalaMiner.Scrypt, scryptConnRef)
 	usbManager ! USBManager.AddStratumRef(ScalaMiner.SHA256, btcConnRef)
 	usbDrivers.foreach(x => usbManager ! USBManager.AddDriver(x))
+
+	sys addShutdownHook {
+		println("Shuttdown down...")
+		system.shutdown()
+		Thread.sleep(1500)
+		println("Shut down")
+	}
 }
 
 object MinerDriver {

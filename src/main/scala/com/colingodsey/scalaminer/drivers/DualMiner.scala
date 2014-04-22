@@ -25,43 +25,99 @@ import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.Interface
 
-class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
-		extends USBDeviceActor with AbstractMiner {
+
+
+class DualMinerSHA256(val device: UsbDevice,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef],
+		val cts: Boolean,
+		endpointsForIface0: Map[USBManager.Interface, Map[USBManager.Endpoint, UsbPipe]])
+		extends DualMinerFacet {
 	import FTDI._
 	import DualMiner._
 
-	//def isScrypt = true
-	def isDualIface0 = false //false(1) for LTC only, otherwise true(0)
-	def identity = DualMiner.DM
+	def isDualIface0: Boolean = true
+	override def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
+	def nonceInterface: USBManager.Interface = interfaceA
 
-	def nonceTimeout = 5.seconds
-	override def defaultTimeout = 8.seconds
+	override lazy val endpointsForIface = endpointsForIface0
 
-	val defaultReadSize: Int = 512
+	def receive = usbBaseReceive orElse {
+		case Start =>
+			log.info("Starting miner actor for " + (device -> identity))
 
-	//override def isScrypt = true
-	override def isFTDI = true
+			detect(postInit)
+		case _ => stash()
+	}
 
-	val calcTimer = context.system.scheduler.schedule(1.seconds, 3.seconds, self, CalcStats)
+	def postInit() {
+		context become normal
+		unstashAll()
+		self ! StartWork
+	}
 
-	stratumSubscribe(stratumRef)
+	override def preStart() {
+		super.preStart()
 
-	//lazy val interfaceDef = identity.interfaces.toSeq.sortBy(_.interface).head
+		endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
+	}
+}
 
-	lazy val interfaceA = identity.interfaces.filter(_.interface == 0).head
-	lazy val interfaceB = identity.interfaces.filter(_.interface == 1).head
+class DualMinerScrypt(val device: UsbDevice,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef],
+		val cts: Boolean,
+		endpointsForIface0: Map[USBManager.Interface, Map[USBManager.Endpoint, UsbPipe]])
+		extends DualMinerFacet {
+	import FTDI._
+	import DualMiner._
+
+	def isDualIface0: Boolean = true
+	override def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
+	def nonceInterface: USBManager.Interface = interfaceB
+
+	override lazy val endpointsForIface = endpointsForIface0
+
+	def receive = usbBaseReceive orElse {
+		case Start =>
+			log.info("Starting miner actor for " + (device -> identity))
+
+			detect(postInit)
+		case _ => stash()
+	}
+
+	def postInit() {
+		context become normal
+		unstashAll()
+		self ! StartWork
+	}
+
+	override def preStart() {
+		super.preStart()
+
+		endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
+	}
+}
+
+class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef])
+		extends DualMinerFacet {
+	import FTDI._
+	import DualMiner._
+
+	override def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
+
+	def isDualIface0 = true //false(1) for LTC only, otherwise true(0)
+
+	var cts = false
 
 	def miningInterface = if(isScrypt && isDualIface0) interfaceB else interfaceA
-	//def nonceInterface = if(isScrypt && !isDualIface0) interfaceB else interfaceA
 	def nonceInterface = miningInterface
 
-	val dualInitIrps = if(isDualIface0) List(
+	def dualInitIrps = if(isDualIface0) List(
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, 0xC068.toShort, 0x202),
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_B),
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, INTERFACE_B)
 	) else Nil
 
-	val initIrps = List(
+	def initIrps = List(
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, 0xC068.toShort, 0x201)
 	) ::: dualInitIrps ::: List(
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_A),
@@ -69,165 +125,9 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 		device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_HIGH, 0)
 	)
 
-	val initIrps2 = List(
+	def initIrps2 = List(
 		device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_LOW, 0)
 	)
-
-	def getNonce(work: Work, job: Stratum.Job) {
-
-		object TimedOut
-
-		val eps = endpointsForIface(nonceInterface)
-
-		val (ep, pipe) = eps.filter(_._1.isInput).head
-
-		lazy val timeoutTime = context.system.scheduler.scheduleOnce(
-			nonceTimeout, self, TimedOut)
-
-		var buffer = ByteString.empty
-
-		addUsbCommandToQueue(nonceInterface, ({ () =>
-			timeoutTime.isCancelled
-			pipe.asyncSubmit(defaultReadBuffer)
-		}, {
-			case AbstractMiner.CancelWork =>
-				timeoutTime.cancel()
-				self ! StartWork
-				true
-			case TimedOut =>
-				//onReadTimeout()
-				timedOut += 1
-				self ! StartWork
-				true
-			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
-				val dat = if(isFTDI) {
-					x.getData.drop(2)
-				} else x.getData
-
-				buffer ++= dat
-
-				if(buffer.length >= 4) {
-					timeoutTime.cancel()
-					self ! (Nonce(work, buffer.take(4)) -> job)
-					true
-				} else {
-					pipe.asyncSubmit(defaultReadBuffer)
-					false
-				}
-		}))
-	}
-
-	def normal: Actor.Receive = usbBaseReceive orElse workReceive orElse {
-		case x: UsbPipeDataEvent =>
-			log.warning("Unhandled pipe data " + x)
-		case x: UsbDeviceDataEvent =>
-			log.warning("Unhandled device data " + x)
-
-		case CalcStats =>
-			log.info(minerStats.toString)
-
-		case _: ContextualCommand =>
-			log.debug("Uncaught ContextualCommand")
-
-		case StartWork =>
-			log.debug("startwork")
-			getWork(true) match {
-				case x if miningJob == None || x == None =>
-					log.info("No work yet")
-					context.system.scheduler.scheduleOnce(1.second, self, StartWork)
-				case Some(job: Stratum.Job) =>
-					//(self ? work).mapTo[Nonce].map(x => x -> job) pipeTo self
-					self ! job
-			}
-
-		case (Nonce(work, nonce), job: Stratum.Job) if nonce.length < 4 =>
-			log.debug("Bad nonce!")
-			self ! StartWork
-		case (Nonce(work, nonce0), job: Stratum.Job) =>
-			val nonce = nonce0//.reverse
-			val mjob = miningJob.get
-
-			val header = ScalaMiner.BufferType.empty ++
-					work.data.take(76) ++ nonce
-
-			val rev = reverseEndian(header).toArray
-
-			val hashBin = SCrypt.scrypt(rev, rev, 1024, 1, 1, 32)
-			val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
-
-			if(getInts(nonce).head == -1) {
-				log.error("Nonce error!")
-				context stop self
-			} else if(hashInt > (difMask / difficulty)) {
-				log.debug("Share is below expected target " +
-						(hashBin.toHex, targetBytes.toHex))
-				short += 1
-			} else {
-				submitted += 1
-
-				log.info("Submitting " + hashBin.toHex + " nonce " + nonce.toList)
-
-				val en = job.extranonce2
-				val ntimepos = 17*4 // 17th integer in datastring
-				val noncepos = 19*4 // 19th integer in datastring
-				val ntime = header.slice(ntimepos, ntimepos + 4)
-				val nonceRead = header.slice(noncepos, noncepos + 4)
-
-				val params = Seq("colinrgodsey.testtt2d".toJson,
-					mjob.id.toJson,
-					en.toHex.toJson,
-					ntime.toHex.toJson,
-					nonceRead.toHex.toJson)
-
-				stratumRef ! Stratum.SubmitStratumJob(params)
-				//log.info("submitting.... to " + stratumRef)
-			}
-
-			self ! StartWork
-
-		case job: Stratum.Job =>
-			val work @ Work(ht, data, midstate, target) = job.work
-			val respondTo = sender
-
-			workStarted += 1
-			log.debug("getting work")
-
-			val cmd = if(isScrypt) {
-				require(target.length == 32)
-				require(midstate.length == 32)
-				//require(data.length == 80)
-
-				val dat = ScalaMiner.BufferType.empty ++
-						Seq[Byte](0x55.toByte, 0xaa.toByte, 0x1f.toByte, 0x00.toByte) ++
-						target ++ midstate ++ data.take(80) ++
-						Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
-						Seq.fill[Byte](8)(0)
-
-				require(dat.length == 160, dat.length + " != 160")
-
-				dat
-			} else {
-				val obDat = ScalaMiner.BufferType.empty ++ midstate ++ Seq.fill[Byte](20)(0) ++
-						data.drop(64).take(12)
-
-				val dat = ScalaMiner.BufferType.empty ++
-						Seq[Byte](0x55.toByte, 0xaa.toByte, 0x0f.toByte, 0x00.toByte) ++
-						Seq.fill[Byte](4)(0) ++ obDat.take(32) ++ Seq.fill[Byte](8)(0) ++
-						obDat.drop(52)
-
-				require(dat.length == 52, dat.length + " != 52")
-
-				dat
-			}
-
-			val initCmds = if(isDualIface0) Constants.ltc_init
-			else Constants.ltc_restart
-
-			sendDataCommands(miningInterface, initCmds)()
-			sendDataCommand(nonceInterface, cmd)()
-			getNonce(work, job)
-
-	}
 
 	def getCTSSetFreq {
 		val ctsIrp = device.createUsbControlIrp(TYPE_IN, SIO_POLL_MODEM_STATUS_REQUEST,
@@ -239,60 +139,24 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 		//etiher 18,96 for dual, or 2,96 for ltc. 0x000x0002,96
 		runIrps(List(ctsIrp)) { data =>
 			def st = ((data(1) << 8) | (data(0) & 0xFF) & 0x10) == 0
+			cts = st
 			//println("cts", data.toList, buf.toList, st)
 
-			val runCommand = if( /*data.length == 2 && */ st)
+			val runCommand = if( /*data.length == 2 && */ !st)
 				Constants.pll_freq_550M_cmd
 			else Constants.pll_freq_850M_cmd
 
 			sendDataCommands(interfaceA, runCommand) {
 				if(isDualIface0)
 					sendDataCommands(interfaceA, Constants.btc_open_nonce_unit) {
-						detect()
+						detect(postInit)
 					}
-				else detect()
-			}
-		}
-
-
-	}
-
-	def detect() {
-		//opt_scrypt ? hex2bin(scrypt_bin, ltc_golden, sizeof(scrypt_bin)) : hex2bin(ob_bin, btc_golden, sizeof(ob_bin));
-
-		val randomness = "FFFFFFFFFFFFFFFF"
-
-		val cmd = (if(isScrypt) Constants.ltc_golden.head
-		else Constants.btc_golden.head) + randomness
-
-		val goldNonce = DatatypeConverter.parseHexBinary(
-			if(isScrypt) Constants.ltc_golden_nonce
-			else Constants.btc_golden_nonce)
-
-		val readSize = 4
-
-		val deadline = Deadline.now + identity.timeout + 14.second
-
-		sendCommands(nonceInterface, Seq(cmd))()
-		readDataUntilLength(nonceInterface, readSize) { dat =>
-			if(dat.length == 4) {
-				val nonce = dat.take(4).reverse
-				log.info(("golden nonce " + nonce.toList, dat.toList).toString)
-				require(nonce.toList == goldNonce.toList,
-					nonce.toList + " != " + goldNonce.toList)
-				postInit
-			} else {
-				log.warning("nonceFail " + dat.toList)
-				failDetect
+				else detect(postInit)
 			}
 		}
 	}
 
-	def postInit {
-		context become normal
-		unstashAll()
-		self ! StartWork
-	}
+
 
 	def receive = usbBaseReceive orElse {
 		case Start =>
@@ -303,11 +167,9 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 					runIrps(initIrps2) { _ =>
 						sleep(2.millis) {
 							val cmds = if(isDualIface0) {
-								sendDataCommands(interfaceA,
-										Constants.btc_gating ++ Constants.btc_init) {
-									sendDataCommands(interfaceB,
-										Constants.ltc_init)(getCTSSetFreq)
-								}
+								sendDataCommands(interfaceA, Constants.btc_gating)()
+								sendDataCommands(interfaceA, Constants.btc_init)()
+								sendDataCommands(interfaceB, Constants.ltc_init)(getCTSSetFreq)
 							} else {
 								sendDataCommands(interfaceA,
 									Constants.ltc_only_init)(getCTSSetFreq)
@@ -319,25 +181,45 @@ class DualMiner(val device: UsbDevice, stratumRef: ActorRef)
 		case _ => stash()
 	}
 
-	def sendCommands(interface: Interface, cmds: Seq[String])(then: => Unit) {
-		val dats = cmds.filter(_ != "") map { cmd =>
-			cmd.fromHex
-			//Array.fill[Byte](cmd.length / 2)(0xFF.toByte)
+	def postInit() {
+		//become either the parent of 2 worker actors
+		if(isDualIface0) {
+			context watch context.actorOf(Props(classOf[DualMinerScrypt], device,
+				workRefs, cts, endpointsForIface), name = "scrypt")
+			context watch context.actorOf(Props(classOf[DualMinerSHA256], device,
+				workRefs, cts, endpointsForIface), name = "sha256")
+
+			openedPipes.foreach { x =>
+				x.removeUsbPipeListener(pipeListener)
+			}
+
+			stratumUnSubscribe(stratumRef)
+			context become {
+				case CalcStats =>
+			}
+		} else { //or become the only facet for one of 2 hash types
+			context become normal
+			unstashAll()
+			self ! StartWork
 		}
-
-		sendDataCommands(interface, dats)(then)
 	}
-
 
 	override def preStart() {
 		super.preStart()
 
-		self ! Start
 	}
 
 	override def postStop() {
+		try scala.concurrent.blocking {
+			device syncSubmit device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
+				SIO_SET_RTS_HIGH, 2.toByte)
+			device syncSubmit device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
+				SIO_SET_DTR_HIGH, 0)
+		} catch {
+			case x: Throwable => log.error(x, "postStop failure")
+		}
+
 		super.postStop()
-		calcTimer.cancel()
 	}
 
 	/*
@@ -365,6 +247,9 @@ case object DualMiner extends USBDeviceDriver {
 
 	trait ContextualCommand
 
+	val btcNonceReadTimeout = 11152.millis
+	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
+
 	case object DM extends USBIdentity {
 		import USBManager._
 
@@ -375,6 +260,8 @@ case object DualMiner extends USBDeviceDriver {
 		def iProduct = "Dual RS232-HS"
 		def config = 1
 		def timeout = dmTimeout
+
+		def isMultiCoin = true
 
 		val interfaces = Set(
 			Interface(0, Set(
@@ -387,11 +274,17 @@ case object DualMiner extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props =
-			Props(classOf[DualMiner], device, workRef)
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
+			Props(classOf[DualMiner], device, workRefs)
 	}
 	
 	object Constants {
+		val DEFAULT_0_9V_PLL = 550
+		val DEFAULT_0_9V_BTC = 60
+		val DEFAULT_1_2V_PLL = 850
+		val DEFAULT_1_2V_BTC = 0
+
 		val pll_freq_1200M_cmd = Seq(
 			"55AAEF000500E085",
 			"55AA0FFFB02800C0"

@@ -2,6 +2,7 @@ package com.colingodsey.scalaminer.usb
 
 import javax.usb.{UsbHostManager, UsbHub, UsbDevice, UsbConst}
 import scala.concurrent.duration._
+import scala.concurrent.blocking
 import scala.collection.JavaConversions._
 import akka.actor._
 import com.colingodsey.scalaminer.{ ScalaMiner, MinerDriver}
@@ -32,7 +33,8 @@ trait USBIdentity {
 
 	def interfaces: Set[USBManager.Interface]
 
-	def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props
+	def usbDeviceActorProps(device: UsbDevice,
+			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
 
 	def matches(device: UsbDevice) = {
 		val desc = device.getUsbDeviceDescriptor
@@ -52,6 +54,8 @@ object USBManager {
 	case object IdentityReset extends Commands
 
 	case object ScanDevices extends Commands
+
+	case class RemoveRef(ref: ActorRef) extends Commands
 
 	object Interface {
 		def apply(interface: Short, endpoints: Set[Endpoint]): Interface =
@@ -89,21 +93,22 @@ class USBManager extends Actor with ActorLogging with Stash {
 
 	implicit def ec = context.dispatcher
 
-	def deviceScanTime = 5.seconds
+	def deviceScanTime = 2.seconds
 	def identityResetTime = 1.minute
 
     var usbDrivers: Set[USBDeviceDriver] = Set.empty
 	var workerMap: Map[UsbDevice, ActorRef] = Map.empty
 	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
 	var failedIdentityMap: Map[UsbDevice, Set[USBIdentity]] = Map.empty
-	val rootHub = UsbHostManager.getUsbServices.getRootUsbHub
 
 	val scanTimer = context.system.scheduler.schedule(
 		1.seconds, deviceScanTime, self, ScanDevices)
 	val identityResetTimer = context.system.scheduler.schedule(
 		identityResetTime, identityResetTime, self, IdentityReset)
 
-	def scanDevices() {
+	def rootHub = UsbHostManager.getUsbServices.getRootUsbHub
+
+	def scanDevices() = blocking {
 		val devices = getDevices(rootHub)
 
 		val matches = (for {
@@ -118,8 +123,7 @@ class USBManager extends Actor with ActorLogging with Stash {
 		val refs = matches map { m =>
 			val (device, identity) = m
 
-			val stratumRef = stratumEndpoints(identity.drv.hashType)
-			val props = identity.usbDeviceActorProps(device, stratumRef)//scryptConnRef)
+			val props = identity.usbDeviceActorProps(device, stratumEndpoints)
 			val name = identity.name + "." + device.hashCode()
 			val ref = context.actorOf(props, name = name)
 
@@ -131,7 +135,7 @@ class USBManager extends Actor with ActorLogging with Stash {
 		workerMap ++= refs
 	}
   
-	def getDevices(hub: UsbHub): Stream[UsbDevice] = {
+	def getDevices(hub: UsbHub): Stream[UsbDevice] = blocking {
 		hub.getAttachedUsbDevices.toStream flatMap {
 			case x: UsbHub if x.isUsbHub => getDevices(x)
 			case x: UsbDevice => Some(x)
@@ -163,6 +167,8 @@ class USBManager extends Actor with ActorLogging with Stash {
 			}
 
 		case Terminated(x) =>
+			context.system.scheduler.scheduleOnce(2.seconds, self, RemoveRef(x))
+		case RemoveRef(x) =>
 			val filtered = workerMap.filter(_._2 == x).keySet
 
 			workerMap --= filtered

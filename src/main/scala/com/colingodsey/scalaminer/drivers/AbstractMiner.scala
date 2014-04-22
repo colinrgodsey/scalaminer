@@ -47,7 +47,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	final def isScrypt = hashType == ScalaMiner.Scrypt
 	def submitStale = true
 
-	lazy val difMask = if(isScrypt) scryptDefaultTarget
+	def difMask = if(isScrypt) scryptDefaultTarget
 	else bitcoinDefaultTarget
 
 	def minerStats = MinerStats(started = workStarted, short = short,
@@ -63,7 +63,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	}
 
 	def stratumUnSubscribe(ref: ActorRef) {
-		require(subRef == context.system.deadLetters, "Not subscribed to " + ref)
+		require(subRef != context.system.deadLetters, "Not subscribed to " + ref)
 		context unwatch ref
 		ref ! Stratum.UnSubscribe(self)
 		subRef = context.system.deadLetters

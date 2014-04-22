@@ -34,11 +34,14 @@ case object FTDI {
 	val VALUE_DATA_BAS = VALUE_DATA_BFL
 	// LLT = BLT (same code)
 	val VALUE_DATA_BLT = 8.toShort
+	val VALUE_DATA_AVA = 8.toShort
 
 	val VALUE_BAUD_BFL = 0xc068.toShort
 	val INDEX_BAUD_BFL = 0x0200.toShort
 	val VALUE_BAUD_BAS = VALUE_BAUD_BFL
 	val INDEX_BAUD_BAS = INDEX_BAUD_BFL
+	val VALUE_BAUD_AVA = 0x001A.toShort
+	val INDEX_BAUD_AVA = 0x0000.toShort
 
 	val VALUE_FLOW = 0.toShort
 	val VALUE_MODEM = 0x0303.toShort

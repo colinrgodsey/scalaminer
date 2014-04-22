@@ -26,7 +26,7 @@ import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.{InputEndpoint, OutputEndpoint, Interface}
 import scala.concurrent.Future
 
-class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdentity)
+class BFLSC(val device: UsbDevice, workRefs: Map[ScalaMiner.HashType, ActorRef], val identity: USBIdentity)
 		extends AbstractMiner with USBDeviceActor {
 	import FTDI._
 	import BFLSC._
@@ -34,8 +34,10 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 
 	override def isFTDI = true
 
-	override def commandDelay = 2.millis
-	override def defaultTimeout = 2.seconds
+	override def commandDelay = 4.millis
+	override def defaultTimeout = 1.seconds
+
+	def stratumRef = workRefs(ScalaMiner.SHA256)
 
 	def jobTimeout = 5.minutes
 	val defaultReadSize: Int = 0x2000 // ?
@@ -101,39 +103,42 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 	}
 
 	def queueJob(job: BFLFullRangeJob)(after: => Unit) {
-		flushRead(miningInterface)
-		usbCommandInfo(miningInterface, "queueJob") {
-			sendDataCommand(miningInterface, QJOB.getBytes)()
-			readLine(miningInterface) { line =>
-				def bail() = {
-					after ==()
-					true
-				}
-
-				line match {
-					case "OK" =>
-						insertCommands(miningInterface) {
-							sendDataCommand(miningInterface, job.payload.toArray)()
-							readLine(miningInterface) { line =>
-								log.debug("queueJob " + line)
-								if(line == "OK:QUEUED") {
-									workStarted += 1
-									//workSubmitted += 1
-								} else log.warning("bad queue resp " + line)
-								after ==()
-							}
-						}
+		if(workSubmitted < maxWorkQueue) {
+			workSubmitted += 1
+			flushRead(miningInterface)
+			usbCommandInfo(miningInterface, "queueJob") {
+				sendDataCommand(miningInterface, QJOB.getBytes)()
+				readLine(miningInterface) { line =>
+					def bail() = {
+						after ==()
 						true
-					case "ERR:QUEUE FULL" =>
-						log.info("queue full")
-						//flushWork(after)
-						bail()
-					case x =>
-						log.warning("Unknown queue resp " + x)
-						bail()
+					}
+
+					line match {
+						case "OK" =>
+							insertCommands(miningInterface) {
+								sendDataCommand(miningInterface, job.payload.toArray)()
+								readLine(miningInterface) { line =>
+									log.debug("queueJob " + line)
+									if(line == "OK:QUEUED") {
+										workStarted += 1
+										//workSubmitted += 1
+									} else log.warning("bad queue resp " + line)
+									after ==()
+								}
+							}
+							true
+						case "ERR:QUEUE FULL" =>
+							log.info("queue full")
+							//flushWork(after)
+							bail()
+						case x =>
+							log.warning("Unknown queue resp " + x)
+							bail()
+					}
 				}
 			}
-		}
+		} else after
 	}
 
 	def startJob(job: BFLNonceJob) {
@@ -161,7 +166,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 
 	def flushWork(after: => Unit) = {
 		maybeStartResultsTimer()
-		//QFLUSH
+
 		flushRead(miningInterface)
 		usbCommandInfo(miningInterface, "flushWork") {
 			sendDataCommand(miningInterface, QFLUSH.getBytes)()
@@ -177,10 +182,11 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 				after ==()
 				true
 			}
-			flushRead(miningInterface)
+			//flushRead(miningInterface)
 
 			sendDataCommand(miningInterface, QRES.getBytes)()
 		}
+		flushRead(miningInterface)
 	}
 
 	//might never fire after
@@ -213,7 +219,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 		if(workSubmitted < maxWorkQueue) {
 			val n = maxWorkQueue - workSubmitted
 			0.until(n).foreach(_ => {
-				workSubmitted += 1
+				//workSubmitted += 1
 				self ! AddWork
 			})
 		}
@@ -253,6 +259,7 @@ class BFLSC(val device: UsbDevice, stratumRef: ActorRef, val identity: USBIdenti
 
 			maybeStartResultsTimer()
 		}
+		//flushRead(miningInterface)
 	}
 
 	def doInit() {
@@ -503,28 +510,18 @@ object BFLSC extends USBDeviceDriver {
 		def config = 1
 		def timeout = bflTimeout
 
+		def isMultiCoin = true
+
 		val interfaces = Set(Interface(0, Set(
 			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props =
-			Props(classOf[BFLSC], device, workRef, BAS)
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
+			Props(classOf[BFLSC], device, workRefs, BAS)
 	}
 
-	/*
-	.drv = DRIVER_bitforce,
-		.name = "BFL",
-		.ident = IDENT_BFL,
-		.idVendor = IDVENDOR_FTDI,
-		.idProduct = 0x6014,
-		.iManufacturer = "Butterfly Labs Inc.",
-		.iProduct = "BitFORCE SHA256",
-		.config = 1,
-		.timeout = BITFORCE_TIMEOUT_MS,
-		.latency = LATENCY_STD,
-		INTINFO(bfl_ints) },
-	 */
 	case object BFL extends USBIdentity {
 		def drv = BFLSC
 		def idVendor = FTDI.vendor
@@ -534,13 +531,16 @@ object BFLSC extends USBDeviceDriver {
 		def config = 1
 		def timeout = bflTimeout
 
+		def isMultiCoin = true
+
 		val interfaces = Set(Interface(0, Set(
 			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
 			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice, workRef: ActorRef): Props =
-			Props(classOf[BFLSC], device, workRef, BFL)
+		override def usbDeviceActorProps(device: UsbDevice,
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
+			Props(classOf[BFLSC], device, workRefs, BFL)
 	}
 
 	object Constants {

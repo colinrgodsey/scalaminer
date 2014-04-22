@@ -20,6 +20,8 @@ object USBDeviceActor {
 		override def isDefinedAt(x: Any): Boolean = true
 		def apply(x: Any): Boolean = sys.error("this should never fire!")
 	}
+
+	case object CloseDevice
 }
 
 trait USBDeviceActor extends Actor with ActorLogging with Stash {
@@ -70,8 +72,6 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	var usbCommandTagStats: Map[(Interface, String), Int] = Map.empty
 	var usbCommandExecuting: Set[Interface] = Set.empty
 
-	device.addUsbDeviceListener(devListener)
-
 	def usbBaseReceive = usbCommandReceive orElse usbErrorReceive
 
 	def onReadTimeout() {
@@ -88,6 +88,9 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 			log.info("Device removed! " + x)
 			//context stop self*/
 	}
+
+	//TODO: use buffers and just constantly read input
+	def constantRead {}
 
 	//tag commands for debugging
 	def usbCommandInfo(interface: Interface, name: String)(f: => Unit) {
@@ -213,14 +216,16 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 			endpoint = iface.getUsbEndpoint(endpointDesc.ep)
 			pipe = endpoint.getUsbPipe
 			_ = {
- 				if(!openedIfaces(iface)) iface.claim(new UsbInterfacePolicy() {
+				val ifaceOpen = openedIfaces(iface)
+
+				openedPipes += pipe
+				openedIfaces += iface
+
+ 				if(!ifaceOpen) iface.claim(new UsbInterfacePolicy() {
 				    override def forceClaim(usbInterface: UsbInterface): Boolean = true
 			    })
 
 				pipe.addUsbPipeListener(pipeListener)
-
-				openedPipes += pipe
-				openedIfaces += iface
 
 				//TODO: really should find out how to guarantee these are closed
 				if(pipe.isOpen) pipe.close()
@@ -352,10 +357,9 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 				val (left, right0) = buffer splitAt idx
 				val right = right0 drop 1
 
-				val res = left
 				buffer = right
 
-				val r = recv(res)
+				val r = recv(left)
 
 				if(r && !buffer.isEmpty)
 					log.info("Throwing out " + buffer.length)
@@ -369,7 +373,10 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	}
 
 	//TODO: log?
-	def flushRead(interface: Interface) = readDataUntilCond(interface)(_ => true)
+	def flushRead(interface: Interface) = {
+		sleepInf(interface, commandDelay)
+		readDataUntilCond(interface)(_.isEmpty)
+	}
 
 	def readDataUntilCond(interface: Interface,
 			timeout: FiniteDuration = defaultTimeout)(recv: IndexedSeq[Byte] => Boolean) {
@@ -451,6 +458,12 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		} else then
 	}
 
+	abstract override def preStart() {
+		super.preStart()
+
+		device.addUsbDeviceListener(devListener)
+	}
+
 	abstract override def postStop() {
 		super.postStop()
 
@@ -459,7 +472,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		log.warning("Cmd stats " + usbCommandTagStats)
 
 		//TODO: .... not too happy about this
-		scala.concurrent.blocking(Thread.sleep(100))
+		scala.concurrent.blocking(Thread.sleep(5000))
 
 		if(!usbCommandTags.isEmpty)
 			log.warning("Died during usb commands " + usbCommandTags)
@@ -486,8 +499,9 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 					log.error(t, "Error while closing interface")
 			}
 		}
-		device.removeUsbDeviceListener(devListener)
 
 		context stop self
+
+		device.removeUsbDeviceListener(devListener)
 	}
 }

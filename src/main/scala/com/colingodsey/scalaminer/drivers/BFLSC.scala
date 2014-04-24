@@ -392,7 +392,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 
 }
 
-object BFLSC extends USBDeviceDriver {
+case object BFLSC extends USBDeviceDriver {
 	sealed trait BFLSCCommand
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.SHA256

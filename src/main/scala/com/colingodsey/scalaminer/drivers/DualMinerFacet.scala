@@ -146,7 +146,9 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 					self ! StartWork
 					true
 				} else {
-					pipe.asyncSubmit(defaultReadBuffer)
+					context.system.scheduler.scheduleOnce(commandDelay * 2) {
+						pipe.asyncSubmit(defaultReadBuffer)
+					}
 					false
 				}
 		}))
@@ -222,8 +224,6 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 		super.preStart()
 
 		stratumSubscribe(stratumRef)
-
-		self ! Start
 	}
 
 	abstract override def postStop() {

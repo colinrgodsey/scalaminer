@@ -52,7 +52,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def stratumUser = "colinrgodsey.testtt2d"
 
-	final def isScrypt = hashType == ScalaMiner.Scrypt
+	def isScrypt = hashType == ScalaMiner.Scrypt
 	def submitStale = true
 
 	def difMask = if(isScrypt) scryptDefaultTarget

@@ -113,9 +113,11 @@ class USBManager extends Actor with ActorLogging with Stash {
 
 		val matches = (for {
 			device <- devices
+			failedSet = failedIdentityMap.getOrElse(device, Set.empty)
 			if !workerMap.contains(device)
 			driver <- usbDrivers
 			identity <- driver.identities
+			if !failedSet(identity)
 			if identity matches device
 			if stratumEndpoints contains driver.hashType
 		} yield device -> identity).toSeq.toMap

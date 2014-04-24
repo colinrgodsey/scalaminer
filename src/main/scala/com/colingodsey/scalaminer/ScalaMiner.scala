@@ -56,7 +56,7 @@ object ScalaMinerMain extends App {
 	sys addShutdownHook {
 		println("Shuttdown down...")
 		system.shutdown()
-		Thread.sleep(1500)
+		system.awaitTermination(15.seconds)
 		println("Shut down")
 	}
 }

@@ -41,22 +41,12 @@ class DualMinerSHA256(val device: UsbDevice,
 
 	override lazy val endpointsForIface = endpointsForIface0
 
-	def receive = usbBaseReceive orElse {
-		case Start =>
-			log.info("Starting miner actor for " + (device -> identity))
-
-			detect(postInit)
-		case _ => stash()
-	}
-
-	def postInit() {
-		context become normal
-		unstashAll()
-		self ! StartWork
-	}
+	def receive = normal
 
 	override def preStart() {
 		super.preStart()
+
+		self ! StartWork
 
 		endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
 	}
@@ -76,22 +66,12 @@ class DualMinerScrypt(val device: UsbDevice,
 
 	override lazy val endpointsForIface = endpointsForIface0
 
-	def receive = usbBaseReceive orElse {
-		case Start =>
-			log.info("Starting miner actor for " + (device -> identity))
-
-			detect(postInit)
-		case _ => stash()
-	}
-
-	def postInit() {
-		context become normal
-		unstashAll()
-		self ! StartWork
-	}
+	def receive = normal
 
 	override def preStart() {
 		super.preStart()
+
+		self ! StartWork
 
 		endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
 	}
@@ -104,7 +84,8 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 
 	override def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
-	def isDualIface0 = false //false(1) for LTC only, otherwise true(0)
+	//TODO: this needs a config value... matches switch
+	def isDualIface0 = true //false(1) for LTC only, otherwise true(0)
 
 	var cts = false
 
@@ -156,17 +137,13 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 		}
 	}
 
-
-
 	def receive = usbBaseReceive orElse {
 		case Start =>
-			log.info("Starting miner actor for " + (device -> identity))
-
 			runIrps(initIrps) { _ =>
 				sleep(2.millis) {
 					runIrps(initIrps2) { _ =>
 						sleep(2.millis) {
-							val cmds = if(isDualIface0) {
+							if(isDualIface0) {
 								sendDataCommands(interfaceA, Constants.btc_gating)()
 								sendDataCommands(interfaceA, Constants.btc_init)()
 								sendDataCommands(interfaceB, Constants.ltc_init)(getCTSSetFreq)
@@ -196,6 +173,8 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 			stratumUnSubscribe(stratumRef)
 			context become {
 				case CalcStats =>
+				case x: USBManager.FailedIdentify =>
+					context.parent ! x
 			}
 		} else { //or become the only facet for one of 2 hash types
 			context become normal
@@ -207,6 +186,7 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 	override def preStart() {
 		super.preStart()
 
+		self ! Start
 	}
 
 	override def postStop() {

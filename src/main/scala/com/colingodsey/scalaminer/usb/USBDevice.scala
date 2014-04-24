@@ -236,17 +236,26 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	} yield desc -> endpoints).toMap
 
 	def failDetect() {
+		log.info("Failed detection for " + identity)
 		context stop self
 		context.parent ! USBManager.FailedIdentify(self, identity)
 	}
 
 	def runIrps(irps: List[UsbControlIrp])(then: IndexedSeq[Byte] => Unit) {
 		if(!irps.isEmpty) {
+			object Timeout
+
+			val timer = context.system.scheduler.scheduleOnce(defaultTimeout, self, Timeout)
+
 			device asyncSubmit irps.head
 
 			log.info("Submitting irp")
 
 			context.become(usbBaseReceive orElse {
+				case Timeout =>
+					context.unbecome()
+					log.error("IRP timeout!")
+					onReadTimeout()
 				case x: UsbDeviceDataEvent if x.getUsbControlIrp == irps.head =>
 					context.unbecome()
 
@@ -461,6 +470,8 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	abstract override def preStart() {
 		super.preStart()
 
+		log.info(s"Starting $identity at $device")
+
 		device.addUsbDeviceListener(devListener)
 	}
 
@@ -472,7 +483,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		log.warning("Cmd stats " + usbCommandTagStats)
 
 		//TODO: .... not too happy about this
-		scala.concurrent.blocking(Thread.sleep(5000))
+		scala.concurrent.blocking(Thread.sleep(1000))
 
 		if(!usbCommandTags.isEmpty)
 			log.warning("Died during usb commands " + usbCommandTags)

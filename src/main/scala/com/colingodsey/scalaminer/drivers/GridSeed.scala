@@ -28,7 +28,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 	lazy val selectedFreq = getFreqFor(freq)
 
 	override def commandDelay = 2.millis
-	override def defaultTimeout = 100.seconds
+	override def defaultTimeout = 100.millis
 
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only
@@ -42,12 +42,14 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 
 	var fwVersion = -1
 	var readStarted = false
+	var hasRead = false
 	var currentJob: Option[Stratum.Job] = None
 
 	def detect() {
 		usbCommandInfo(intf, "detect") {
 			sendDataCommand(intf, detectBytes)()
 			readDataUntilLength(intf, READ_SIZE) { dat =>
+				hasRead = true
 				if(dat.take(READ_SIZE - 4) != detectRespBytes) {
 					log.warning("Failed detect!")
 					failDetect()
@@ -84,10 +86,14 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 						failDetect()
 					} else detected()
 				}
-
-				true
 			}
 		}
+	}
+
+	override def onReadTimeout() {
+		log.error("Read data timeout!")
+		if(!hasRead) failDetect()
+		else context stop self
 	}
 
 	def detected() {
@@ -144,6 +150,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 	def startWorkRead(): Unit = if(!readStarted) {
 		readStarted = true
 
+		sleepInf(intf, 30.millis) //TODO: is this needed??
 		readDataUntilLength(intf, READ_SIZE) { dat =>
 			require(dat.length == READ_SIZE)
 
@@ -157,12 +164,15 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 
 					self ! Nonce(job.work, nonce, job.extranonce2)
 				}
+
+				startWorkRead()
 			}
 		}
 	}
 
 	def normal: Receive = usbBaseReceive orElse workReceive orElse {
 		case AbstractMiner.CancelWork => sendWork()
+		case GridSeed.CalcStats => log.info(minerStats.toString)
 	}
 
 	def receive: Receive = usbBaseReceive orElse {
@@ -173,6 +183,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 		super.preStart()
 
 		self ! Start
+
+		context.system.scheduler.schedule(1.seconds, 3.seconds, self, GridSeed.CalcStats)
 	}
 }
 
@@ -273,7 +285,9 @@ trait PL2303Device extends USBDeviceActor {
 }
 
 case object GridSeed extends USBDeviceDriver {
-	import USBUtils._
+	sealed trait Command
+
+	case object CalcStats extends Command
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
@@ -335,7 +349,8 @@ case object GridSeed extends USBDeviceDriver {
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
-				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
+				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
+			Props(classOf[GridSeedFTDIMiner], device, workRefs, GSD2)
 	}
 
 	case object GSD3 extends USBIdentity {
@@ -360,138 +375,140 @@ case object GridSeed extends USBDeviceDriver {
 
 	val identities: Set[USBIdentity] = Set(GSD2) //Set(GSD, GSD1, GSD2, GSD3)
 
-	object Constants {
-		val MINER_THREADS = 1
-		val LATENCY = 4.toShort
+	val Constants = GSConstants
+}
 
-		val DEFAULT_BAUD = 115200
-		val DEFAULT_FREQUENCY = 750
-		val DEFAULT_CHIPS = 5
-		val DEFAULT_USEFIFO = 0
-		val DEFAULT_BTCORE = 16
+object GSConstants {
+	val MINER_THREADS = 1
+	val LATENCY = 4.toShort
 
-		val COMMAND_DELAY = 20
-		val READ_SIZE = 12
-		val MCU_QUEUE_LEN = 0
-		val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN + 2)
-		val READBUF_SIZE = 8192
-		val HASH_SPEED = 0.0851128926.millis
-		// in ms
-		val F_IN = 25 // input frequency
+	val DEFAULT_BAUD = 115200
+	val DEFAULT_FREQUENCY = 750
+	val DEFAULT_CHIPS = 5
+	val DEFAULT_USEFIFO = 0
+	val DEFAULT_BTCORE = 16
 
-		val PROXY_PORT = 3350
+	val COMMAND_DELAY = 20
+	val READ_SIZE = 12
+	val MCU_QUEUE_LEN = 0
+	val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN + 2)
+	val READBUF_SIZE = 8192
+	val HASH_SPEED = 0.0851128926.millis
+	// in ms
+	val F_IN = 25 // input frequency
 
-		val PERIPH_BASE = 0x40000000
-		val APB2PERIPH_BASE = (PERIPH_BASE + 0x10000)
-		val GPIOA_BASE = (APB2PERIPH_BASE + 0x0800)
-		val CRL_OFFSET = 0x00
-		val ODR_OFFSET = 0x0c
+	val PROXY_PORT = 3350
 
-		val regSize = 4
+	val PERIPH_BASE = 0x40000000
+	val APB2PERIPH_BASE = (PERIPH_BASE + 0x10000)
+	val GPIOA_BASE = (APB2PERIPH_BASE + 0x0800)
+	val CRL_OFFSET = 0x00
+	val ODR_OFFSET = 0x0c
 
-		val detectBytes = "55aac000909090900000000001000000".fromHex
-		val detectRespBytes = "55aac00090909090".fromHex
-		val chipResetBytes = "55AAC000808080800000000001000000".fromHex
-		val initBytes = Seq("55AAC000C0C0C0C00500000001000000",
-			"55AAEF020000000000000000000000000000000000000000",
-			"55AAEF3020000000").map(_.fromHex)
-		val ltcResetBytes = Seq("55AA1F2816000000",
-			"55AA1F2817000000").map(_.fromHex)
+	val regSize = 4
 
-		val freqNumbers = Seq(
-			700,  706,  713,  719,  725,  731,  738,  744,
-			750,  756,  763,  769,  775,  781,  788,  794,
-			800,  813,  825,  838,  850,  863,  875,  888,
-			900,  913,  925,  938,  950,  963,  975,  988,
-			1000, 1013, 1025, 1038, 1050, 1063, 1075, 1088,
-			1100, 1113, 1125, 1138, 1150, 1163, 1175, 1188,
-			1200, 1213, 1225, 1238, 1250, 1263, 1275, 1288,
-			1300, 1313, 1325, 1338, 1350, 1363, 1375, 1388,
-			1400)
+	val detectBytes = "55aac000909090900000000001000000".fromHex
+	val detectRespBytes = "55aac00090909090".fromHex
+	val chipResetBytes = "55AAC000808080800000000001000000".fromHex
+	val initBytes = Seq("55AAC000C0C0C0C00500000001000000",
+		"55AAEF020000000000000000000000000000000000000000",
+		"55AAEF3020000000").map(_.fromHex)
+	val ltcResetBytes = Seq("55AA1F2816000000",
+		"55AA1F2817000000").map(_.fromHex)
 
-		val frequencyCommands = (freqNumbers zip binFrequency).toMap
+	val freqNumbers = Seq(
+		700,  706,  713,  719,  725,  731,  738,  744,
+		750,  756,  763,  769,  775,  781,  788,  794,
+		800,  813,  825,  838,  850,  863,  875,  888,
+		900,  913,  925,  938,  950,  963,  975,  988,
+		1000, 1013, 1025, 1038, 1050, 1063, 1075, 1088,
+		1100, 1113, 1125, 1138, 1150, 1163, 1175, 1188,
+		1200, 1213, 1225, 1238, 1250, 1263, 1275, 1288,
+		1300, 1313, 1325, 1338, 1350, 1363, 1375, 1388,
+		1400)
 
-		def getFreqFor(freq: Int) = {
-			val closest = freqNumbers.map(x =>
-				x -> math.abs(x - freq)).sortBy(_._2).head._1
+	lazy val frequencyCommands = (freqNumbers zip binFrequency).toMap
 
-			closest
-		}
+	def getFreqFor(freq: Int) = {
+		val closest = freqNumbers.map(x =>
+			x -> math.abs(x - freq)).sortBy(_._2).head._1
 
-		val binFrequency = Seq(
-			"55aaef0005006083",
-			"55aaef000500038e",
-			"55aaef0005000187",
-			"55aaef000500438e",
-			"55aaef0005008083",
-			"55aaef000500838e",
-			"55aaef0005004187",
-			"55aaef000500c38e",
-
-			"55aaef000500a083",
-			"55aaef000500038f",
-			"55aaef0005008187",
-			"55aaef000500438f",
-			"55aaef000500c083",
-			"55aaef000500838f",
-			"55aaef000500c187",
-			"55aaef000500c38f",
-
-			"55aaef000500e083",
-			"55aaef0005000188",
-			"55aaef0005000084",
-			"55aaef0005004188",
-			"55aaef0005002084",
-			"55aaef0005008188",
-			"55aaef0005004084",
-			"55aaef000500c188",
-
-			"55aaef0005006084",
-			"55aaef0005000189",
-			"55aaef0005008084",
-			"55aaef0005004189",
-			"55aaef000500a084",
-			"55aaef0005008189",
-			"55aaef000500c084",
-			"55aaef000500c189",
-
-			"55aaef000500e084",
-			"55aaef000500018a",
-			"55aaef0005000085",
-			"55aaef000500418a",
-			"55aaef0005002085",
-			"55aaef000500818a",
-			"55aaef0005004085",
-			"55aaef000500c18a",
-
-			"55aaef0005006085",
-			"55aaef000500018b",
-			"55aaef0005008085",
-			"55aaef000500418b",
-			"55aaef000500a085",
-			"55aaef000500818b",
-			"55aaef000500c085",
-			"55aaef000500c18b",
-
-			"55aaef000500e085",
-			"55aaef000500018c",
-			"55aaef0005000086",
-			"55aaef000500418c",
-			"55aaef0005002086",
-			"55aaef000500818c",
-			"55aaef0005004086",
-			"55aaef000500c18c",
-
-			"55aaef0005006086",
-			"55aaef000500018d",
-			"55aaef0005008086",
-			"55aaef000500418d",
-			"55aaef000500a086",
-			"55aaef000500818d",
-			"55aaef000500c086",
-			"55aaef000500c18d",
-
-			"55aaef000500e086"
-		).map(_.fromHex)
+		closest
 	}
+
+	val binFrequency = Seq(
+		"55aaef0005006083",
+		"55aaef000500038e",
+		"55aaef0005000187",
+		"55aaef000500438e",
+		"55aaef0005008083",
+		"55aaef000500838e",
+		"55aaef0005004187",
+		"55aaef000500c38e",
+
+		"55aaef000500a083",
+		"55aaef000500038f",
+		"55aaef0005008187",
+		"55aaef000500438f",
+		"55aaef000500c083",
+		"55aaef000500838f",
+		"55aaef000500c187",
+		"55aaef000500c38f",
+
+		"55aaef000500e083",
+		"55aaef0005000188",
+		"55aaef0005000084",
+		"55aaef0005004188",
+		"55aaef0005002084",
+		"55aaef0005008188",
+		"55aaef0005004084",
+		"55aaef000500c188",
+
+		"55aaef0005006084",
+		"55aaef0005000189",
+		"55aaef0005008084",
+		"55aaef0005004189",
+		"55aaef000500a084",
+		"55aaef0005008189",
+		"55aaef000500c084",
+		"55aaef000500c189",
+
+		"55aaef000500e084",
+		"55aaef000500018a",
+		"55aaef0005000085",
+		"55aaef000500418a",
+		"55aaef0005002085",
+		"55aaef000500818a",
+		"55aaef0005004085",
+		"55aaef000500c18a",
+
+		"55aaef0005006085",
+		"55aaef000500018b",
+		"55aaef0005008085",
+		"55aaef000500418b",
+		"55aaef000500a085",
+		"55aaef000500818b",
+		"55aaef000500c085",
+		"55aaef000500c18b",
+
+		"55aaef000500e085",
+		"55aaef000500018c",
+		"55aaef0005000086",
+		"55aaef000500418c",
+		"55aaef0005002086",
+		"55aaef000500818c",
+		"55aaef0005004086",
+		"55aaef000500c18c",
+
+		"55aaef0005006086",
+		"55aaef000500018d",
+		"55aaef0005008086",
+		"55aaef000500418d",
+		"55aaef000500a086",
+		"55aaef000500818d",
+		"55aaef000500c086",
+		"55aaef000500c18d",
+
+		"55aaef000500e086"
+	).map(_.fromHex)
 }

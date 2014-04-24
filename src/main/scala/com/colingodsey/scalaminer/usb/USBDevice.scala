@@ -413,7 +413,11 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 				val r = recv(dat)
 
 				if(r) timeoutTime.cancel()
-				else pipe.asyncSubmit(defaultReadBuffer)
+				else {
+					context.system.scheduler.scheduleOnce(commandDelay) {
+						pipe.asyncSubmit(defaultReadBuffer)
+					}
+				}
 
 				r
 		}))

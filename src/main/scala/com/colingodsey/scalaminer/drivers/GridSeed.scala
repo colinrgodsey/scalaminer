@@ -28,7 +28,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 	lazy val selectedFreq = getFreqFor(freq)
 
 	override def commandDelay = 2.millis
-	override def defaultTimeout = 100.millis
+	override def defaultTimeout = 10000.millis
 
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only

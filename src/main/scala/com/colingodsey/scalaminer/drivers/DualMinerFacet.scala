@@ -108,7 +108,6 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 	}
 
 	def getNonce(work: Work, job: Stratum.Job) {
-
 		object TimedOut
 
 		val eps = endpointsForIface(nonceInterface)
@@ -147,6 +146,8 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 					true
 				} else {
 					context.system.scheduler.scheduleOnce(commandDelay * 2) {
+						//NOTE: this will execute outside of actor context
+						//but the queue should still create seq exec for this context
 						pipe.asyncSubmit(defaultReadBuffer)
 					}
 					false

@@ -38,8 +38,6 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 	override def commandDelay = 4.millis
 	override def defaultTimeout = 1.seconds
 
-	//def stratumRef = workRefs(ScalaMiner.SHA256)
-
 	def jobTimeout = 5.minutes
 	val defaultReadSize: Int = 0x2000 // ?
 
@@ -331,8 +329,8 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 			//flush old work here
 			if(workSubmitted > 0) flushWork()
 		case GetResults =>
-			getResults
 			resultTimer = None
+			getResults
 		case CheckTemp => checkTemp()
 		case CalcStats => log.info(minerStats.toString)
 		case ExpireJobs(set) =>
@@ -360,7 +358,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 				log.warning("Cannot find job for midstate")
 				failed += 1
 			} else {
-				self ! Nonce(jobOpt.get.work, nonce0, jobOpt.get.extranonce2)
+				self ! Nonce(jobOpt.get.work, nonce, jobOpt.get.extranonce2)
 			}
 	}
 

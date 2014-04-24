@@ -122,6 +122,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			if(getInts(nonce).head == -1) {
 				log.error("Nonce error!")
 				context stop self
+				failed += 1
 			} else if(hashInt > (difMask / difficulty)) {
 				log.debug("Share is below expected target " +
 						(hashBin.toHex, targetBytes.toHex))

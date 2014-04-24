@@ -36,9 +36,6 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 	def identity = DualMiner.DM
 
 	def device: UsbDevice
-	def workRefs: Map[ScalaMiner.HashType, ActorRef]
-
-	def stratumRef = workRefs(if(isScrypt) ScalaMiner.Scrypt else ScalaMiner.SHA256)
 
 	def nonceTimeout = if(isScrypt) scryptNonceReadTimeout else btcNonceReadTimeout
 	override def defaultTimeout = 1000.millis
@@ -104,7 +101,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 					SIO_SET_RTS_HIGH, 2.toByte)))(_ => postDetect())
 			} else {
 				log.warning("nonceFail " + dat.toList)
-				failDetect
+				failDetect()
 			}
 
 		}
@@ -145,7 +142,8 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 
 				if(buffer.length >= 4) {
 					timeoutTime.cancel()
-					self ! (Nonce(work, buffer.take(4)) -> job)
+					self ! Nonce(work, buffer.take(4), job.extranonce2)
+					self ! StartWork
 					true
 				} else {
 					pipe.asyncSubmit(defaultReadBuffer)
@@ -176,52 +174,6 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 					//(self ? work).mapTo[Nonce].map(x => x -> job) pipeTo self
 					self ! job
 			}
-
-		case (Nonce(work, nonce), job: Stratum.Job) if nonce.length < 4 =>
-			log.debug("Bad nonce!")
-			self ! StartWork
-		case (Nonce(work, nonce), job: Stratum.Job) =>
-			val mjob = miningJob.get
-
-			val header = ScalaMiner.BufferType.empty ++
-					work.data.take(76) ++ nonce
-
-			val rev = reverseEndian(header)
-			lazy val revArr = reverseEndian(header).toArray
-
-			val hashBin = if(isScrypt) SCrypt.scrypt(revArr, revArr, 1024, 1, 1, 32).toSeq
-			else doubleHash(rev)
-			val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
-
-			if(getInts(nonce).head == -1) {
-				log.error("Nonce error!")
-				context stop self
-			} else if(hashInt > (difMask / difficulty)) {
-				log.debug("Share is below expected target " +
-						(hashBin.toHex, targetBytes.toHex))
-				short += 1
-			} else {
-				submitted += 1
-
-				log.info("Submitting " + hashBin.toHex + " nonce " + nonce.toList)
-
-				val en = job.extranonce2
-				val ntimepos = 17*4 // 17th integer in datastring
-				val noncepos = 19*4 // 19th integer in datastring
-				val ntime = header.slice(ntimepos, ntimepos + 4)
-				val nonceRead = header.slice(noncepos, noncepos + 4)
-
-				val params = Seq("colinrgodsey.testtt2d".toJson,
-					mjob.id.toJson,
-					en.toHex.toJson,
-					ntime.toHex.toJson,
-					nonceRead.toHex.toJson)
-
-				stratumRef ! Stratum.SubmitStratumJob(params)
-				//log.info("submitting.... to " + stratumRef)
-			}
-
-			self ! StartWork
 
 		case job: Stratum.Job =>
 			val work @ Work(ht, data, midstate, target) = job.work

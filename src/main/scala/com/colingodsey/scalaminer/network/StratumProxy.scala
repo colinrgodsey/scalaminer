@@ -18,13 +18,14 @@ import com.colingodsey.scalaminer.hashing.Hashing
 import Hashing._
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import scala.concurrent._
-import com.colingodsey.scalaminer.{ScalaMiner, MinerStats, Work}
+import com.colingodsey.scalaminer.{Nonce, ScalaMiner, MinerStats, Work}
 import scala.collection.JavaConversions._
 import spray.can.Http
 import com.colingodsey.scalaminer.drivers.AbstractMiner
 import com.colingodsey.scalaminer.utils._
 import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._
+import com.colingodsey.scalaminer.ScalaMiner.HashType
 
 object StratumProxy {
 
@@ -39,12 +40,14 @@ object StratumProxy {
 }
 
 
-class StratumProxy(stratumRef: ActorRef) extends Actor with AbstractMiner with HttpService {
+class StratumProxy(override val stratumRef: ActorRef)
+		extends Actor with AbstractMiner with HttpService {
 	import StratumProxy._
 	def actorRefFactory = context
 	implicit def ec = context.system.dispatcher
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
+	def workRefs: Map[HashType, ActorRef] = Map.empty
 
 	def jobTimeout = 5.minutes
 
@@ -92,44 +95,18 @@ class StratumProxy(stratumRef: ActorRef) extends Actor with AbstractMiner with H
 
 		case SubmitResult(str) =>
 			val header = str.fromHex.take(80)
-
-			val rev = reverseEndian(header)
-
-			val hashBin = doubleHash(rev) //numerically read as little-endian
-			//add an extra 0 here so that we dont make a negative on accident
-			val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
-			val blockHash = hashBin
-
 			val merkleHash = header.slice(36, 68)
+			val noncepos = 19*4 // 19th integer in datastring
+			val nonce = header.slice(noncepos, noncepos + 4)
 
 			val job = merkleJobMap.get(merkleHash)
 
-			if(hashInt > (difMask / difficulty)) {
-				log.debug("Share is below expected target " +
-						(hashBin.toHex, targetBytes.toHex))
-				short += 1
-			} else if(job == None) {
+			if(job.isDefined) {
+				val en = job.get.extranonce2
+				self ! Nonce(job.get.work, nonce, en)
+			} else {
 				log.warning("Cannot find job for merkle hash!")
 				failed += 1
-			} else {
-				submitted += 1
-
-				log.info("Submitting " + blockHash.toHex)
-
-				val en = job.get.extranonce2
-				val ntimepos = 17*4 // 17th integer in datastring
-				val noncepos = 19*4 // 19th integer in datastring
-				val ntime = header.slice(ntimepos, ntimepos + 4)
-				val nonce = header.slice(noncepos, noncepos + 4)
-
-				val params = Seq("colinrgodsey.testtt2".toJson,
-					job.get.id.toJson,
-					en.toHex.toJson,
-					ntime.toHex.toJson,
-					nonce.toHex.toJson)
-
-				stratumRef ! Stratum.SubmitStratumJob(params)
-				//log.info("submitting.... to " + stratumRef)
 			}
 
 		//val ints = getInts(header)

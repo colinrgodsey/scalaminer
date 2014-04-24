@@ -26,7 +26,8 @@ import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.{InputEndpoint, OutputEndpoint, Interface}
 import scala.concurrent.Future
 
-class BFLSC(val device: UsbDevice, workRefs: Map[ScalaMiner.HashType, ActorRef], val identity: USBIdentity)
+class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef],
+		val identity: USBIdentity)
 		extends AbstractMiner with USBDeviceActor {
 	import FTDI._
 	import BFLSC._
@@ -37,7 +38,7 @@ class BFLSC(val device: UsbDevice, workRefs: Map[ScalaMiner.HashType, ActorRef],
 	override def commandDelay = 4.millis
 	override def defaultTimeout = 1.seconds
 
-	def stratumRef = workRefs(ScalaMiner.SHA256)
+	//def stratumRef = workRefs(ScalaMiner.SHA256)
 
 	def jobTimeout = 5.minutes
 	val defaultReadSize: Int = 0x2000 // ?
@@ -61,6 +62,8 @@ class BFLSC(val device: UsbDevice, workRefs: Map[ScalaMiner.HashType, ActorRef],
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex),
 		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
 	)
+
+	//context.system.scheduler.scheduleOnce(3.seconds)(context stop self)
 
 	var workSubmitted = 0
 	//var inProcess = 0
@@ -357,39 +360,7 @@ class BFLSC(val device: UsbDevice, workRefs: Map[ScalaMiner.HashType, ActorRef],
 				log.warning("Cannot find job for midstate")
 				failed += 1
 			} else {
-				val job = jobOpt.get
-				val work = job.work
-				val header = ScalaMiner.BufferType.empty ++
-						work.data.take(76) ++ nonce //76 + nonce
-
-				val rev = reverseEndian(header)
-				val hashBin = doubleHash(rev)
-				val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
-
-				if(hashInt > (difMask / difficulty)) {
-					log.debug("Share is below expected target " +
-							(hashBin.toHex, targetBytes.toHex))
-					short += 1
-				} else {
-					submitted += 1
-
-					log.info("Submitting " + hashBin.toHex)
-
-					val en = job.extranonce2
-					val ntimepos = 17*4 // 17th integer in datastring
-					val noncepos = 19*4 // 19th integer in datastring
-					val ntime = header.slice(ntimepos, ntimepos + 4)
-					val nonce = header.slice(noncepos, noncepos + 4)
-
-					val params = Seq("colinrgodsey.testtt2d".toJson,
-						job.id.toJson,
-						en.toHex.toJson,
-						ntime.toHex.toJson,
-						nonce.toHex.toJson)
-
-					stratumRef ! Stratum.SubmitStratumJob(params)
-					//log.info("submitting.... to " + stratumRef)
-				}
+				self ! Nonce(jobOpt.get.work, nonce0, jobOpt.get.extranonce2)
 			}
 	}
 

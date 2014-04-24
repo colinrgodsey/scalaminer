@@ -7,7 +7,7 @@ import javax.usb.event.{UsbDeviceDataEvent, UsbDeviceErrorEvent, UsbDeviceEvent,
 import java.io.{ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
-import com.colingodsey.scalaminer.drivers.{BFLSC, DualMiner}
+import com.colingodsey.scalaminer.drivers.{GridSeed, BFLSC, DualMiner}
 import akka.io.{ IO, Tcp }
 import com.colingodsey.scalaminer.network.Stratum.StratumConnection
 import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
@@ -32,7 +32,7 @@ object ScalaMiner {
 object ScalaMinerMain extends App {
 	implicit val system = ActorSystem("scalaminer")
 
-	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC)
+	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
 
 	val tcpManager = IO(Tcp)
 
@@ -74,7 +74,7 @@ trait MinerDriver {
 case class Work(hashType: ScalaMiner.HashType, data: Seq[Byte],
 				midstate: Seq[Byte], target: Seq[Byte])
 
-case class Nonce(workd: Work, nonce: Seq[Byte])
+case class Nonce(work: Work, nonce: Seq[Byte], extraNonce: Seq[Byte])
 
 
 case class MinerStats(started: Int = -1, short: Int = -1, submitted: Int = -1,

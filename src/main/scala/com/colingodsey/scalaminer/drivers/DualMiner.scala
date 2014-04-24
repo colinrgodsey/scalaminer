@@ -102,9 +102,9 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 	import FTDI._
 	import DualMiner._
 
-	override def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
+	override def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
-	def isDualIface0 = true //false(1) for LTC only, otherwise true(0)
+	def isDualIface0 = false //false(1) for LTC only, otherwise true(0)
 
 	var cts = false
 

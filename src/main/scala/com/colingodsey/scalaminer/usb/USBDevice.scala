@@ -235,7 +235,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		} yield endpointDesc -> pipe).toMap
 	} yield desc -> endpoints).toMap
 
-	def failDetect {
+	def failDetect() {
 		context stop self
 		context.parent ! USBManager.FailedIdentify(self, identity)
 	}

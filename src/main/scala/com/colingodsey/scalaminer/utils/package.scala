@@ -8,6 +8,8 @@ import akka.util.ByteString
  * Created by crgodsey on 4/10/14.
  */
 package object utils {
+	def curTime = System.currentTimeMillis() / 1000
+
 	def intToBytes(x: Int) = {
 		//val bs = BigInt(x).toByteArray
 		//Seq.fill[Byte](4 - bs.length)(0) ++ bs
@@ -39,8 +41,6 @@ package object utils {
 		else Stream(BigInt(dat.take(4).toArray).toInt) append getInts(dat.drop(4))
 
 	def reverseEndian(dat: Seq[Byte]): ScalaMiner.BufferType =
-	//getInts(dat).map(x => intToBytes(x).reverse).foldLeft(
-	//	Stream.empty[Byte])(_ append _)
 		ScalaMiner.BufferType.empty ++ dat.take(4).reverse ++ {
 			val dropped = dat drop 4
 			if(dropped.isEmpty) Stream.empty
@@ -67,7 +67,7 @@ package object utils {
 		builder.result()
 	}
 
-	implicit class ByteSeqPimp2(val seq: Array[Byte]) extends AnyVal {
+	implicit class ByteArrayPimp(val seq: Array[Byte]) extends AnyVal {
 		def toHex = utils.bytesToHex(seq.iterator)
 	}
 
@@ -78,7 +78,7 @@ package object utils {
 		def reverseInts = utils.reverseInts(seq)
 	}
 
-	implicit class StringPimps(val str: String) extends AnyVal {
+	implicit class StringPimp(val str: String) extends AnyVal {
 		def fromHex = ByteString.empty ++ DatatypeConverter.parseHexBinary(str)
 	}
 }

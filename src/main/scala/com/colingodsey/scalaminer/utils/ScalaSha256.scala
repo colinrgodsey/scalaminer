@@ -2,9 +2,6 @@ package com.colingodsey.scalaminer.utils
 
 import com.colingodsey.Sha256
 
-/**
- * Created by crgodsey on 4/10/14.
- */
 final class ScalaSha256 extends Sha256 {
 	def update(seq: TraversableOnce[Byte]) {
 		seq foreach update
@@ -12,7 +9,7 @@ final class ScalaSha256 extends Sha256 {
 
 	def getState = Vector(h0, h1, h2, h3, h4, h5, h6, h7)
 
-	def getResultSeq = Vector((h0 >>> 24).toByte,
+	/*def getResultSeq = Vector((h0 >>> 24).toByte,
 			(h0 >>> 16).toByte, 
 			(h0 >>> 8).toByte, 
 			h0.toByte, 
@@ -33,7 +30,9 @@ final class ScalaSha256 extends Sha256 {
 			(h5 >>> 8).toByte, h5.toByte, 
 			(h6 >>> 24).toByte, (h6 >>> 16).toByte, 
 			(h6 >>> 8).toByte, h6.toByte, (h7 >>> 24).toByte, 
-			(h7 >>> 16).toByte, (h7 >>> 8).toByte, h7.toByte)
+			(h7 >>> 16).toByte, (h7 >>> 8).toByte, h7.toByte)*/
+
+	def getResultSeq: IndexedSeq[Byte] = getResult()
 
 	def digestSeq() = {
 		val tail: Array[Byte] = padBuffer

@@ -388,8 +388,10 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	}
 
 	def readDataUntilCond(interface: Interface,
-			timeout: FiniteDuration = defaultTimeout)(recv: IndexedSeq[Byte] => Boolean) {
+			timeout: FiniteDuration = defaultTimeout,
+			softFailTimeout: Option[FiniteDuration] = None)(recv: IndexedSeq[Byte] => Boolean) {
 		object TimedOut
+		object SoftTimedOut
 
 		val eps = endpointsForIface(interface)
 

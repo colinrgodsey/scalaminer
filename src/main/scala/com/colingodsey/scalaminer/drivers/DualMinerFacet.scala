@@ -120,6 +120,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 		var buffer = ByteString.empty
 
 		addUsbCommandToQueue(nonceInterface, ({ () =>
+			//realize lazy timeoutTime val here
 			timeoutTime.isCancelled
 			pipe.asyncSubmit(defaultReadBuffer)
 		}, {
@@ -145,7 +146,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 					self ! StartWork
 					true
 				} else {
-					context.system.scheduler.scheduleOnce(commandDelay * 2) {
+					context.system.scheduler.scheduleOnce(15.millis) {
 						//NOTE: this will execute outside of actor context
 						//but the queue should still create seq exec for this context
 						pipe.asyncSubmit(defaultReadBuffer)

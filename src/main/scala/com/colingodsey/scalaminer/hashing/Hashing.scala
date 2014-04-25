@@ -29,17 +29,6 @@ object Hashing {
 		reverseEndian(midState)
 	}
 
-	/*
-	def difMask = BigInt({
-		val hex = if(isScrypt)
-			"0000ffff00000000000000000000000000000000000000000000000000000000"
-		else
-			"00000000ffff0000000000000000000000000000000000000000000000000000"
-
-		DatatypeConverter.parseHexBinary(hex)
-	})
-	 */
-
 	def getWork(hashType: ScalaMiner.HashType, extraNonceInt: Int, job: MiningJob,
 			extraNonceInfo: ExtraNonce, targetBytes: Seq[Byte], needsMidstate: Boolean) = {
 		val bytes = intToBytes(extraNonceInt)
@@ -66,7 +55,7 @@ object Hashing {
 		val serializedHeader = ScalaMiner.BufferType.empty ++
 				job.protoVersion ++ job.previousHash ++ merkleRoot ++
 				intToBytes(ntime.toInt) ++ job.nBits ++ intToBytes(0) ++ //enBytes ++
-				"000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000".fromHex
+				workBasePad
 
 		//require(serializedHeader.length == 128, "bad length " + serializedHeader.length)
 
@@ -81,6 +70,16 @@ object Hashing {
 		Stratum.Job(Work(hashType, serializedHeader, midstate, target),
 			job.id, merkleRoot, enBytes)
 	}
+
+	val workBasePad = "000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000".fromHex
+
+	//hashes in a single dif 1 share
+	val dif1Hashes = {
+		//2^48/65535
+		((BigInt(2) pow 48) / 65535).toLong
+	}
+
+	def hashesForDiff(diff: Int) = diff * dif1Hashes
 
 	val bitcoinTarget1 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000"
 	val bitcoinDefaultTarget =  BigInt({

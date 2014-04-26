@@ -17,7 +17,7 @@ ScalaMiner is a Scala/JVM implementation of several mining abilities available t
 **Libraries**
 
 * scrypt (https://github.com/wg/scrypt): offers a pluggable native driver for extra performance
-* usb4java (https://github.com/usb4java/usb4java): requires libusb native drive. See their instructions on how to compile it if the included drivers are broken are don’t include your platform.
+* usb4java (https://github.com/usb4java/usb4java): requires libusb native driver. See their instructions on how to compile it if the included drivers are broken or don’t include your platform.
 * Akka
 * Spray
 * SLF4J

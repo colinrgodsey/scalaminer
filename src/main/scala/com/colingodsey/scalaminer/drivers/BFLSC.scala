@@ -171,14 +171,15 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 		maybeStartResultsTimer()
 
 		usbCommandInfo(miningInterface, "flushWork") {
-			sleepInf(miningInterface, 8.millis)
 			flushRead(miningInterface)
 			sendDataCommand(miningInterface, QFLUSH.getBytes)()
+			sleepInf(miningInterface, 8.millis)
 			readLine(miningInterface, softFailTimeout = Some(1.second),
 				timeout = 3.seconds) { line =>
-				if(line == "" || line.substring(0, 2) != "OK")
+				if(line == "" || line.substring(0, 2) != "OK") {
+					workSubmitted = 0
 					log.warning("Flush failed with " + line)
-				else {
+				} else {
 					val flushed = line.split(" ")(1).toInt
 					log.info("Flushed " + flushed)
 					workSubmitted = 0
@@ -259,7 +260,8 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 			} catch {
 				case e: Throwable =>
 					log.error(e, "failed parsing " + lines.toString)
-					flushWork()
+					//flushWork()
+					flushRead(miningInterface)
 			}
 
 			maybeStartResultsTimer()

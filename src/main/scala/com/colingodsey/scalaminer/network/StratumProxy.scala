@@ -31,8 +31,6 @@ import com.typesafe.config.Config
 
 object StratumProxy {
 
-	case object CalcStats
-
 	case object JobTimeouts
 
 	case class GetWork(needMidstate: Boolean)
@@ -55,8 +53,6 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 
 	val started = Deadline.now
 
-	val calcTimer = context.system.scheduler.schedule(
-		1.seconds, 3.seconds, self, CalcStats)
 	val jTimeoutTimer = context.system.scheduler.schedule(
 		1.seconds, config.getDur("job-timeout-gc"), self, JobTimeouts)
 
@@ -229,8 +225,6 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 
 	override def postStop() {
 		super.postStop()
-		calcTimer.cancel()
-		jTimeoutTimer.cancel()
 
 		IO(Http) ! Tcp.Unbind
 	}

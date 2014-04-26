@@ -33,7 +33,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 	override def defaultTimeout = 10000.millis
 
 	def nonceTimeout = 5.seconds
-	def nonceDelay = if(isFTDI) 75.millis else 10.millis
+	def nonceDelay = if(isFTDI) 50.millis else 3.millis
 
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only
@@ -54,8 +54,6 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 		usbCommandInfo(intf, "detect") {
 			sendDataCommand(intf, detectBytes)()
 			readDataUntilLength(intf, READ_SIZE) { dat =>
-				self ! MinerMetrics.DevicePoll
-
 				if(dat.take(READ_SIZE - 4) != detectRespBytes) {
 					log.warning("Failed detect!")
 					failDetect()
@@ -192,6 +190,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 				true
 			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
 				val dat = x.getData
+
+				self ! MinerMetrics.DevicePoll
 
 				buffer ++= dat
 

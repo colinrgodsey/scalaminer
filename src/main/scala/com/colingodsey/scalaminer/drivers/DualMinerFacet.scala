@@ -41,7 +41,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 	def nonceTimeout = if(isScrypt) scryptNonceReadTimeout else btcNonceReadTimeout
 	override def defaultTimeout = 1000.millis
 
-	val nonceDelay = 75.millis
+	val nonceDelay = 50.millis
 
 	val defaultReadSize: Int = 512
 

@@ -5,8 +5,10 @@ import scala.concurrent.duration._
 import scala.concurrent.blocking
 import scala.collection.JavaConversions._
 import akka.actor._
+import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
 import com.colingodsey.scalaminer.metrics.MinerMetrics
+import com.typesafe.config.Config
 
 
 object USBUtils {
@@ -91,13 +93,10 @@ object USBManager {
 	}
 }
 
-class USBManager extends Actor with ActorLogging with Stash {
+class USBManager(config: Config) extends Actor with ActorLogging with Stash {
 	import USBManager._
 
 	implicit def ec = context.dispatcher
-
-	def deviceScanTime = 2.seconds
-	def identityResetTime = 1.minute
 
     var usbDrivers: Set[USBDeviceDriver] = Set.empty
 	var workerMap: Map[UsbDevice, ActorRef] = Map.empty
@@ -106,9 +105,9 @@ class USBManager extends Actor with ActorLogging with Stash {
 	var metricsSubs = Set[ActorRef]()
 
 	val scanTimer = context.system.scheduler.schedule(
-		1.seconds, deviceScanTime, self, ScanDevices)
+		1.seconds, config getDur "poll-time", self, ScanDevices)
 	val identityResetTimer = context.system.scheduler.schedule(
-		identityResetTime, identityResetTime, self, IdentityReset)
+		1.minute, config getDur "identity-reset-time", self, IdentityReset)
 
 	def rootHub = UsbHostManager.getUsbServices.getRootUsbHub
 

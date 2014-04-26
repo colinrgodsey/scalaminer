@@ -34,7 +34,7 @@ object ScalaMiner {
 object ScalaMinerMain extends App {
 	val classLoader = getClass.getClassLoader
 	val config = ConfigFactory.load(classLoader)
-	val smConfig = config.getConfig("com.mediamath.scalaminer")
+	val smConfig = config.getConfig("com.colingodsey.scalaminer")
 	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
 	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
@@ -52,7 +52,8 @@ object ScalaMinerMain extends App {
 
 	val usbManager = if(smConfig.hasPath("devices.usb.enabled") &&
 			smConfig.getBoolean("devices.usb.enabled")) {
-		val ref = system.actorOf(Props[USBManager], name = "usb-manager")
+		val ref = system.actorOf(Props(classOf[USBManager],
+			smConfig getConfig "devices.usb"), name = "usb-manager")
 		ref.tell(MinerMetrics.Subscribe, metricsRef)
 		usbDrivers.foreach(x => ref ! USBManager.AddDriver(x))
 		Some(ref)

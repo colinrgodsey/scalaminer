@@ -4,7 +4,7 @@ import com.colingodsey.Sha256
 import com.colingodsey.scalaminer.network.Stratum.{ExtraNonce, MiningJob}
 import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.utils._
-import scala.concurrent.duration.Deadline
+import scala.concurrent.duration.{FiniteDuration, Deadline}
 import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import akka.util.ByteString
@@ -71,6 +71,19 @@ object Hashing {
 			job.id, merkleRoot, enBytes)
 	}
 
+	def prettyHashRate(nHashes: Double, dur: FiniteDuration) = {
+		val hpm = nHashes / dur.toMillis
+		val hps = hpm * 1000
+
+		def nicePrint(v: Double) = "%.2f".format(v)
+
+		if(hps > 1000000000000L) nicePrint(hps / 1000000000000L) + " TH/s"
+		else if(hps > 1000000000L) nicePrint(hps / 1000000000L) + " GH/s"
+		else if(hps > 1000000) nicePrint(hps / 1000000) + " MH/s"
+		else if(hps > 1000) nicePrint(hps / 1000) + " kH/s"
+		else nicePrint(hps) + " kH/s"
+	}
+
 	val workBasePad = "000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000".fromHex
 
 	//hashes in a single dif 1 share
@@ -79,7 +92,8 @@ object Hashing {
 		((BigInt(2) pow 48) / 65535).toLong
 	}
 
-	def hashesForDiff(diff: Int) = diff * dif1Hashes
+	def hashesForDiffSHA256(diff: Int) = diff * dif1Hashes
+	def hashesForDiffScrypt(diff: Int) = (diff * dif1Hashes) >> 16
 
 	val bitcoinTarget1 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000"
 	val bitcoinDefaultTarget =  BigInt({

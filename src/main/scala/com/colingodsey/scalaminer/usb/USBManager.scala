@@ -5,7 +5,8 @@ import scala.concurrent.duration._
 import scala.concurrent.blocking
 import scala.collection.JavaConversions._
 import akka.actor._
-import com.colingodsey.scalaminer.{ ScalaMiner, MinerDriver}
+import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
+import com.colingodsey.scalaminer.metrics.MinerMetrics
 
 
 object USBUtils {
@@ -13,13 +14,15 @@ object USBUtils {
 	def epo(i: Byte) = (UsbConst.ENDPOINT_DIRECTION_OUT | i).toByte
 }
 
+//should be a case object
 trait USBDeviceDriver extends MinerDriver {
 	def identities: Set[USBIdentity]
 
 	def hashType: ScalaMiner.HashType
 }
 
-trait USBIdentity {
+//should be a case object
+trait USBIdentity extends MinerIdentity {
 	def drv: USBDeviceDriver
 	def idVendor: Short
 	def idProduct: Short
@@ -44,18 +47,18 @@ trait USBIdentity {
 }
 
 object USBManager {
-	sealed trait Commands
+	sealed trait Command
 
-	case class AddDriver(driver: USBDeviceDriver) extends Commands
-	case class AddStratumRef(typ: ScalaMiner.HashType, stratumRef: ActorRef) extends Commands
+	case class AddDriver(driver: USBDeviceDriver) extends Command
+	case class AddStratumRef(typ: ScalaMiner.HashType, stratumRef: ActorRef) extends Command
 
-	case class FailedIdentify(ref: ActorRef, identity: USBIdentity) extends Commands
+	case class FailedIdentify(ref: ActorRef, identity: USBIdentity) extends Command
 
-	case object IdentityReset extends Commands
+	case object IdentityReset extends Command
 
-	case object ScanDevices extends Commands
+	case object ScanDevices extends Command
 
-	case class RemoveRef(ref: ActorRef) extends Commands
+	case class RemoveRef(ref: ActorRef) extends Command
 
 	object Interface {
 		def apply(interface: Short, endpoints: Set[Endpoint]): Interface =
@@ -100,6 +103,7 @@ class USBManager extends Actor with ActorLogging with Stash {
 	var workerMap: Map[UsbDevice, ActorRef] = Map.empty
 	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
 	var failedIdentityMap: Map[UsbDevice, Set[USBIdentity]] = Map.empty
+	var metricsSubs = Set[ActorRef]()
 
 	val scanTimer = context.system.scheduler.schedule(
 		1.seconds, deviceScanTime, self, ScanDevices)
@@ -131,6 +135,8 @@ class USBManager extends Actor with ActorLogging with Stash {
 
 			context watch ref
 
+			metricsSubs.foreach(ref.tell(MinerMetrics.Subscribe, _))
+
 			device -> ref
 		}
 
@@ -158,6 +164,12 @@ class USBManager extends Actor with ActorLogging with Stash {
 	}
 
 	def receive = {
+		case MinerMetrics.Subscribe =>
+			metricsSubs += sender
+			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
+		case MinerMetrics.UnSubscribe =>
+			metricsSubs -= sender
+			workerMap.foreach(_._2.tell(MinerMetrics.UnSubscribe, sender))
 		case IdentityReset => failedIdentityMap = Map.empty
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
 		case AddDriver(drv) => usbDrivers += drv

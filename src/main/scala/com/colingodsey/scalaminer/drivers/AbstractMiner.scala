@@ -18,22 +18,22 @@ import com.lambdaworks.crypto.SCrypt
 import spray.json.DefaultJsonProtocol._
 import com.colingodsey.scalaminer.Nonce
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
-import scala.Some
-import com.colingodsey.scalaminer.MinerStats
 import akka.event.LoggingAdapter
+import com.colingodsey.scalaminer.metrics.MinerMetrics
 
 object AbstractMiner {
 	sealed trait Command
 
 	case object CancelWork extends Command
-	case object NonceFail extends Command
-	case object NonceSubmitted extends Command
-	case object NonceShort extends Command
+
+	//responds with MinerIdentity
+	case object Identify extends Command
+
+	case object StatSubscribe
 
 	def submitNonce(n: Nonce, job: Stratum.MiningJob, diff: Int,
 			target: Seq[Byte], strat: ActorRef, isScrypt: Boolean,
-			self: ActorRef, log: LoggingAdapter, stratumUser: String,
-			difMask: BigInt) {
+			self: ActorRef, log: LoggingAdapter, difMask: BigInt) {
 		val Nonce(work, nonce, extraNonce) = n
 
 		val header = ScalaMiner.BufferType.empty ++
@@ -49,13 +49,15 @@ object AbstractMiner {
 		if(getInts(nonce).head == -1) {
 			log.error("Nonce error!")
 			self ! PoisonPill
-			self ! NonceFail
+			self ! MinerMetrics.NonceFail
 		} else if(hashInt > (difMask / diff)) {
 			log.debug("Share is below expected target " +
 					(hashBin.toHex, target.toHex))
-			self ! NonceShort
+			self ! MinerMetrics.NonceShort
 		} else {
-			self ! NonceSubmitted
+			val hashes = if(isScrypt) hashesForDiffScrypt(diff)
+			else hashesForDiffSHA256(diff)
+			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 
 			log.info("Submitting " + hashBin.toHex + " nonce " + nonce.toList)
 
@@ -64,12 +66,13 @@ object AbstractMiner {
 			val ntime = header.slice(ntimepos, ntimepos + 4)
 			val nonceRead = header.slice(noncepos, noncepos + 4)
 
-			val params = Seq(stratumUser.toJson,
+			val params = Seq(//stratumUser.toJson,
 				job.id.toJson,
 				extraNonce.toHex.toJson,
 				ntime.toHex.toJson,
 				nonceRead.toHex.toJson)
 
+			self ! MinerMetrics.NonceSubmitted
 			strat.tell(Stratum.SubmitStratumJob(params), self)
 			//log.info("submitting.... to " + stratumRef)
 		}
@@ -124,26 +127,11 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	var extraNonceCounter = (0xFFFFF * math.random).toInt
 	var subRef: ActorRef = context.system.deadLetters
 
-	var short = 0
-	var submitted = 0
-	var workStarted = 0
-	var failed = 0
-	var accepted = 0
-	var tooLow = 0
-	var stale = 0
-	var timedOut = 0
-
-	def stratumUser = "colinrgodsey.testtt2d"
-
 	def isScrypt = hashType == ScalaMiner.Scrypt
 	def submitStale = true
 
 	def difMask = if(isScrypt) scryptDefaultTarget
 	else bitcoinDefaultTarget
-
-	def minerStats = MinerStats(started = workStarted, short = short,
-		submitted = submitted, failed = failed, accepted = accepted,
-		tooLow = tooLow, stale = stale, timeout = timedOut)
 
 	def stratumSubscribe(ref: ActorRef) {
 		if(subRef != context.system.deadLetters)
@@ -169,15 +157,15 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	def workReceive: Receive = {
 		case Stratum.WorkAccepted =>
 			log.debug("Share accepted!")
-			accepted += 1
+			self ! MinerMetrics.NonceAccepted
 		case x @ Stratum.StratumError(21, msg) =>
 			log.debug("stale share submitted")
-			stale += 1
+			self ! MinerMetrics.NonceStale
 		case x @ Stratum.StratumError(23, msg) =>
-			tooLow += 1
+			self ! MinerMetrics.NonceStratumLow
 			log.warning(msg)
 		case x @ Stratum.StratumError(_, msg) =>
-			failed += 1
+			self ! MinerMetrics.NonceFail
 			log.warning(x.toString)
 		case Stratum.Difficulty(d) =>
 			difficulty = d
@@ -189,13 +177,10 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 		case x: MiningJob =>
 			miningJob = Some(x)
 			self ! AbstractMiner.CancelWork
-		case NonceFail => failed += 1
-		case NonceSubmitted => submitted += 1
-		case NonceShort => short += 1
 		case n: Nonce =>
 			//break off into async
 			Future(submitNonce(n, miningJob.get, difficulty, targetBytes, stratumRef,
-					isScrypt, self, log, stratumUser, difMask)) onFailure { case x: Throwable =>
+					isScrypt, self, log, difMask)) onFailure { case x: Throwable =>
 				log.error(x, "Nonce submit failed!")
 			}
 	}

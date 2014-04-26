@@ -10,6 +10,7 @@ import com.colingodsey.scalaminer.usb.USBManager.{OutputEndpoint, InputEndpoint,
 import com.colingodsey.scalaminer.network.Stratum
 import akka.util.ByteString
 import javax.usb.event.UsbPipeDataEvent
+import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 
 object GridSeedMiner {
 	sealed trait Command
@@ -17,7 +18,7 @@ object GridSeedMiner {
 	case object Start extends Command
 }
 
-trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
+trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker {
 	import GridSeedMiner._
 	import GridSeed.Constants._
 
@@ -145,7 +146,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 					Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
 					"12345678".fromHex
 
-			workStarted += 1
+			self ! MinerMetrics.WorkStarted
 
 			usbCommandInfo(intf, "sendWork") {
 				//flushRead(intf)
@@ -183,7 +184,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 				true
 			case TimedOut =>
 				//onReadTimeout()
-				timedOut += 1
+				self ! MinerMetrics.WorkTimeout
 				readStarted = false
 				sendWork()
 				true
@@ -216,9 +217,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 		}))
 	}
 
-	def normal: Receive = usbBaseReceive orElse workReceive orElse {
+	def normal: Receive = metricsReceive orElse usbBaseReceive orElse workReceive orElse {
 		case AbstractMiner.CancelWork => sendWork()
-		case GridSeed.CalcStats => log.info(minerStats.toString)
 	}
 
 	def receive: Receive = usbBaseReceive orElse {
@@ -233,7 +233,6 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner {
 
 		stratumSubscribe(stratumRef)
 
-		context.system.scheduler.schedule(1.seconds, 3.seconds, self, GridSeed.CalcStats)
 	}
 }
 

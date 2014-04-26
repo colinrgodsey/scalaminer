@@ -11,6 +11,7 @@ import com.colingodsey.scalaminer.{ScalaMiner}
 import scala.util.Try
 import com.colingodsey.scalaminer.usb.USBManager.Interface
 import scala.collection.immutable.Queue
+import com.colingodsey.scalaminer.metrics.MinerMetrics
 
 object USBDeviceActor {
 	//Start func, then continue/finalization func
@@ -75,6 +76,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	def usbBaseReceive = usbCommandReceive orElse usbErrorReceive
 
 	def onReadTimeout() {
+		self ! MinerMetrics.WorkTimeout
 		log.error("Read data timeout!")
 		context stop self
 	}

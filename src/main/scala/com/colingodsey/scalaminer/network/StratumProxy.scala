@@ -18,14 +18,16 @@ import com.colingodsey.scalaminer.hashing.Hashing
 import Hashing._
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import scala.concurrent._
-import com.colingodsey.scalaminer.{Nonce, ScalaMiner, MinerStats, Work}
+import com.colingodsey.scalaminer.{Nonce, ScalaMiner, Work}
 import scala.collection.JavaConversions._
 import spray.can.Http
-import com.colingodsey.scalaminer.drivers.AbstractMiner
+import com.colingodsey.scalaminer.drivers.{MetricsMiner, AbstractMiner}
 import com.colingodsey.scalaminer.utils._
 import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._
 import com.colingodsey.scalaminer.ScalaMiner.HashType
+import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsWorker}
+import com.typesafe.config.Config
 
 object StratumProxy {
 
@@ -40,8 +42,8 @@ object StratumProxy {
 }
 
 
-class StratumProxy(override val stratumRef: ActorRef)
-		extends Actor with AbstractMiner with HttpService {
+class StratumProxy(override val stratumRef: ActorRef, config: Config)
+		extends Actor with AbstractMiner with HttpService with MetricsWorker {
 	import StratumProxy._
 	def actorRefFactory = context
 	implicit def ec = context.system.dispatcher
@@ -49,18 +51,19 @@ class StratumProxy(override val stratumRef: ActorRef)
 	def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
 	def workRefs: Map[HashType, ActorRef] = Map.empty
 
-	def jobTimeout = 5.minutes
+	def jobTimeout = config.getDur("job-timeout")
 
 	val started = Deadline.now
 
 	val calcTimer = context.system.scheduler.schedule(
 		1.seconds, 3.seconds, self, CalcStats)
 	val jTimeoutTimer = context.system.scheduler.schedule(
-		1.seconds, 45.seconds, self, JobTimeouts)
+		1.seconds, config.getDur("job-timeout-gc"), self, JobTimeouts)
 
 	var merkleJobMap: Map[Seq[Byte], Stratum.Job] = Map.empty
 
-	(IO(Http) ? Http.Bind(self, interface = "0.0.0.0", port = 8099)).pipeTo(self)
+	(IO(Http) ? Http.Bind(self, interface = config getString "host",
+		port = config getInt "port")).pipeTo(self)
 
 	stratumSubscribe(stratumRef)
 
@@ -68,7 +71,8 @@ class StratumProxy(override val stratumRef: ActorRef)
 		case AbstractMiner.CancelWork =>
 
 		case GetWork(needsMidstate) =>
-			workStarted += 1
+			//workStarted += 1
+			self ! MinerMetrics.WorkStarted
 			getWorkJson(needsMidstate) pipeTo sender
 		case job: Stratum.Job =>
 			merkleJobMap += job.merkle_hash -> job
@@ -79,8 +83,6 @@ class StratumProxy(override val stratumRef: ActorRef)
 			}
 			workReceive(x)
 		case Status.Failure(e) => throw e
-		case CalcStats =>
-			log.info(minerStats.toString)
 		case JobTimeouts =>
 			val curTime = (System.currentTimeMillis / 1000)
 			val expired = merkleJobMap filter { case (hash, job) =>
@@ -90,7 +92,7 @@ class StratumProxy(override val stratumRef: ActorRef)
 			if(!expired.isEmpty) {
 				log.warning(expired.size + " jobs timed out")
 				merkleJobMap --= expired.keySet
-				timedOut += expired.size
+				self ! MinerMetrics.MetricValue(MinerMetrics.WorkTimeout, expired.size)
 			}
 
 		case SubmitResult(str) =>
@@ -106,14 +108,15 @@ class StratumProxy(override val stratumRef: ActorRef)
 				self ! Nonce(job.get.work, nonce, en)
 			} else {
 				log.warning("Cannot find job for merkle hash!")
-				failed += 1
+				//failed += 1
+				self ! MinerMetrics.NonceFail
 			}
 
 		//val ints = getInts(header)
 		//val hash
 	}
 
-	def receive: Receive = proxyReceive orElse workReceive orElse runRoute(route)
+	def receive: Receive = proxyReceive orElse workReceive orElse runRoute(route) orElse metricsReceive
 
 	def getWorkJson(needsMidstate: Boolean): Future[Option[JsObject]] = {
 		val fut = getWorkAsync(needsMidstate)

@@ -16,7 +16,7 @@ import com.colingodsey.scalaminer.hashing.Hashing
 import Hashing._
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import scala.concurrent._
-import com.colingodsey.scalaminer.{ScalaMiner, MinerStats, Work}
+import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import com.colingodsey.scalaminer.utils._
 
 object Stratum {
@@ -209,7 +209,8 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 			responseMap(id)(js)
 			responseMap -= id
 
-		case SubmitStratumJob(params) =>
+		case SubmitStratumJob(params0) =>
+			val params = conn.user.toJson +: params0
 			val respondTo = sender
 
 			log.debug("Submitting share! " + params)

@@ -24,8 +24,9 @@ import com.colingodsey.scalaminer.utils._
 import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.Interface
+import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 
-trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
+trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorker  {
 	import FTDI._
 	import DualMiner._
 
@@ -130,7 +131,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 				true
 			case TimedOut =>
 				//onReadTimeout()
-				timedOut += 1
+				self ! MinerMetrics.WorkTimeout
 				self ! StartWork
 				true
 			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
@@ -156,14 +157,12 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 		}))
 	}
 
-	def normal: Actor.Receive = usbBaseReceive orElse workReceive orElse {
+	def normal: Actor.Receive = metricsReceive orElse usbBaseReceive orElse
+			workReceive orElse {
 		case x: UsbPipeDataEvent =>
 			log.warning("Unhandled pipe data " + x)
 		case x: UsbDeviceDataEvent =>
 			log.warning("Unhandled device data " + x)
-
-		case CalcStats =>
-			log.info(minerStats.toString)
 
 		case _: ContextualCommand =>
 			log.debug("Uncaught ContextualCommand")
@@ -183,7 +182,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner  {
 			val work @ Work(ht, data, midstate, target) = job.work
 			val respondTo = sender
 
-			workStarted += 1
+			self ! MinerMetrics.WorkStarted
 			log.debug("getting work")
 
 			val cmd = if(isScrypt) {

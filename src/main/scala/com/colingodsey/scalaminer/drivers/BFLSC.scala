@@ -25,10 +25,11 @@ import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
 import com.colingodsey.scalaminer.usb.USBManager.{InputEndpoint, OutputEndpoint, Interface}
 import scala.concurrent.Future
+import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 
 class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef],
 		val identity: USBIdentity)
-		extends AbstractMiner with USBDeviceActor {
+		extends AbstractMiner with USBDeviceActor with MetricsWorker {
 	import FTDI._
 	import BFLSC._
 	import Constants._
@@ -122,7 +123,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 								readLine(miningInterface) { line =>
 									log.debug("queueJob " + line)
 									if(line == "OK:QUEUED") {
-										workStarted += 1
+										self ! MinerMetrics.WorkStarted
 										//workSubmitted += 1
 									} else log.warning("bad queue resp " + line)
 									after ==()
@@ -159,6 +160,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 
 	override def onReadTimeout() {
 		log.error("Read data timeout! " + usbCommandTags)
+		self ! MinerMetrics.WorkTimeout
 		if(workSubmitted <= 0) context stop self
 		maybeStartResultsTimer()
 		flushRead(miningInterface)
@@ -168,8 +170,9 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 	def flushWork(after: => Unit) = {
 		maybeStartResultsTimer()
 
-		flushRead(miningInterface)
 		usbCommandInfo(miningInterface, "flushWork") {
+			sleepInf(miningInterface, 8.millis)
+			flushRead(miningInterface)
 			sendDataCommand(miningInterface, QFLUSH.getBytes)()
 			readLine(miningInterface, softFailTimeout = Some(1.second),
 				timeout = 3.seconds) { line =>
@@ -179,6 +182,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 					val flushed = line.split(" ")(1).toInt
 					log.info("Flushed " + flushed)
 					workSubmitted = 0
+					self ! MinerMetrics.MetricValue(MinerMetrics.WorkCanceled, flushed)
 				}
 				after ==()
 				true
@@ -324,7 +328,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 		}
 	}
 
-	def normal: Receive = usbBaseReceive orElse workReceive orElse {
+	def normal: Receive = usbBaseReceive orElse metricsReceive orElse workReceive orElse {
 		case AbstractMiner.CancelWork =>
 			//flush old work here
 			if(workSubmitted > 0) flushWork()
@@ -332,14 +336,13 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 			resultTimer = None
 			getResults
 		case CheckTemp => checkTemp()
-		case CalcStats => log.info(minerStats.toString)
 		case ExpireJobs(set) =>
 			if(!set.isEmpty) {
 				val preSize = midstateToJobMap.size
 				midstateToJobMap --= set
 				val n = preSize - midstateToJobMap.size
 				log.warning(n + " jobs timed out")
-				timedOut += n
+				self ! MinerMetrics.MetricValue(MinerMetrics.WorkTimeout, n)
 			}
 		case JobTimeouts =>
 			val jobMap = midstateToJobMap
@@ -356,7 +359,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 
 			if (!jobOpt.isDefined) {
 				log.warning("Cannot find job for midstate")
-				failed += 1
+				self ! MinerMetrics.NonceFail
 			} else {
 				self ! Nonce(jobOpt.get.work, nonce, jobOpt.get.extranonce2)
 			}

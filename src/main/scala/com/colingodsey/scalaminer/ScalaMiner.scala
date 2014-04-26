@@ -13,6 +13,8 @@ import com.colingodsey.scalaminer.network.Stratum.StratumConnection
 import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
 import spray.can.Http
 import akka.util.ByteString
+import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsActor}
+import com.typesafe.config.{Config, ConfigFactory}
 
 object ScalaMiner {
 	type BufferType = ByteString
@@ -30,28 +32,56 @@ object ScalaMiner {
 }
 
 object ScalaMinerMain extends App {
-	implicit val system = ActorSystem("scalaminer")
+	val classLoader = getClass.getClassLoader
+	val config = ConfigFactory.load(classLoader)
+	val smConfig = config.getConfig("com.mediamath.scalaminer")
+	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
 	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
 
 	val tcpManager = IO(Tcp)
 
-	val btcConn = StratumConnection("nl1.ghash.io", 3333, "colinrgodsey.testtt2d", "x")
-	val scryptConn = StratumConnection("doge.ghash.io", 3333, "colinrgodsey.testtt2d", "x")
+	def readStConn(cfg: Config) = {
+		if(cfg.hasPath("host")) {
+			StratumConnection(cfg getString "host", cfg getInt "port",
+				cfg getString "user", cfg getString "pass")
+		} else ??? //TODO: implement parsing for multiple stratums
+	}
 
-	val btcConnRef = system.actorOf(Props(classOf[StratumActor],
-		tcpManager, btcConn, ScalaMiner.SHA256), name = "btc-conn")
+	val metricsRef = system.actorOf(Props[MetricsActor], name = "metrics")
 
-	val scryptConnRef = system.actorOf(Props(classOf[StratumActor],
-		tcpManager, scryptConn, ScalaMiner.Scrypt), name = "scrypt-conn")
+	val usbManager = if(smConfig.hasPath("devices.usb.enabled") &&
+			smConfig.getBoolean("devices.usb.enabled")) {
+		val ref = system.actorOf(Props[USBManager], name = "usb-manager")
+		ref.tell(MinerMetrics.Subscribe, metricsRef)
+		usbDrivers.foreach(x => ref ! USBManager.AddDriver(x))
+		Some(ref)
+	} else None
 
-	val stratumProxy = system.actorOf(Props(classOf[StratumProxy], btcConnRef), name = "stratumProxy")
+	if(smConfig.hasPath("stratum.scrypt")) {
+		val conn = readStConn(smConfig getConfig "stratum.scrypt")
+		val connRef = system.actorOf(Props(classOf[StratumActor],
+			tcpManager, conn, ScalaMiner.Scrypt), name = "stratum-scrypt")
 
-	val usbManager = system.actorOf(Props[USBManager], name = "usb-manager")
+		if(usbManager.isDefined)
+			usbManager.get ! USBManager.AddStratumRef(ScalaMiner.Scrypt, connRef)
+	}
 
-	usbManager ! USBManager.AddStratumRef(ScalaMiner.Scrypt, scryptConnRef)
-	usbManager ! USBManager.AddStratumRef(ScalaMiner.SHA256, btcConnRef)
-	usbDrivers.foreach(x => usbManager ! USBManager.AddDriver(x))
+	if(smConfig.hasPath("stratum.sha256")) {
+		val conn = readStConn(smConfig getConfig "stratum.sha256")
+		val connRef = system.actorOf(Props(classOf[StratumActor],
+			tcpManager, conn, ScalaMiner.SHA256), name = "stratum-sha256")
+
+		if(usbManager.isDefined)
+			usbManager.get ! USBManager.AddStratumRef(ScalaMiner.SHA256, connRef)
+
+		if(smConfig.hasPath("stratum-proxy") && smConfig.getBoolean("stratum-proxy.enabled")) {
+			val stratumProxy = system.actorOf(Props(classOf[StratumProxy], connRef,
+				smConfig.getConfig("stratum-proxy")), name = "stratum-proxy")
+
+			stratumProxy.tell(MinerMetrics.Subscribe, metricsRef)
+		}
+	}
 
 	sys addShutdownHook {
 		println("Shuttdown down...")
@@ -65,10 +95,15 @@ object MinerDriver {
 
 }
 
+//should be a case object
 trait MinerDriver {
-
+	def identities: Set[_ <: MinerIdentity]
 }
 
+//should be a case object
+trait MinerIdentity {
+	def drv: MinerDriver
+}
 
 
 case class Work(hashType: ScalaMiner.HashType, data: Seq[Byte],
@@ -77,7 +112,7 @@ case class Work(hashType: ScalaMiner.HashType, data: Seq[Byte],
 case class Nonce(work: Work, nonce: Seq[Byte], extraNonce: Seq[Byte])
 
 
-case class MinerStats(started: Int = -1, short: Int = -1, submitted: Int = -1,
+/*case class MinerStats(started: Int = -1, short: Int = -1, submitted: Int = -1,
 		failed: Int = -1, accepted: Int = -1, tooLow: Int = -1,
 		stale: Int = -1, timeout: Int = -1) {
 	val values = Map(
@@ -92,7 +127,7 @@ case class MinerStats(started: Int = -1, short: Int = -1, submitted: Int = -1,
 	).map(x => x._1.toString.drop(1) -> x._2)
 
 	override def toString = s"MinerStats(${values.mkString(", ")})"
-}
+}*/
 
 
 

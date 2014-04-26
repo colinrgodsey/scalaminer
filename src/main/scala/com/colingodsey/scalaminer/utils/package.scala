@@ -3,6 +3,9 @@ package com.colingodsey.scalaminer
 import com.colingodsey.Sha256
 import javax.xml.bind.DatatypeConverter
 import akka.util.ByteString
+import com.typesafe.config.Config
+import scala.concurrent.duration.{FiniteDuration, Duration}
+import java.util.concurrent.TimeUnit
 
 /**
  * Created by crgodsey on 4/10/14.
@@ -80,5 +83,15 @@ package object utils {
 
 	implicit class StringPimp(val str: String) extends AnyVal {
 		def fromHex = ByteString.empty ++ DatatypeConverter.parseHexBinary(str)
+	}
+
+	implicit class ConfigPimp(val cfg: Config) extends AnyVal {
+		def getDur(path: String) = {
+			val dur = Duration(cfg.getString(path))
+
+			require(dur.isFinite())
+
+			FiniteDuration(dur.toNanos, TimeUnit.NANOSECONDS)
+		}
 	}
 }

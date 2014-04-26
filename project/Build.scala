@@ -6,7 +6,7 @@ import sbtassembly.Plugin._
 import AssemblyKeys._
 
 object ProjectBuild extends Build {
-	val Organization = "com.colingdsey"
+	val Organization = "com.colingodsey"
 	val Version = "3.7.1"
 	val ScalaVersion = "2.10.3"
 	val PlatformVersion = "0.4"

@@ -52,6 +52,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 	def detect() {
 		usbCommandInfo(intf, "detect") {
+			sendDataCommand(intf, chipResetBytes)()
 			sendDataCommand(intf, detectBytes)()
 			readDataUntilLength(intf, READ_SIZE) { dat =>
 				if(dat.take(READ_SIZE - 4) != detectRespBytes) {
@@ -195,6 +196,18 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 				buffer ++= dat
 
+				def keepReading = {
+					//discard....
+					if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
+
+					context.system.scheduler.scheduleOnce(nonceDelay) {
+						//NOTE: this will execute outside of actor context
+						//but the queue should still create seq exec for this context
+						pipe.asyncSubmit(defaultReadBuffer)
+					}
+					false
+				}
+
 				if(buffer.length >= READ_SIZE && (buffer(0) == 0x55.toByte ||
 						buffer(1) == 0x20.toByte)) {
 					val nonce = buffer.slice(4, 8) //.reverse
@@ -209,20 +222,11 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 					hasRead = true
 
-					readStarted = false
+					/*readStarted = false
 					sendWork()
-					true
-				} else {
-					//discard....
-					if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
-
-					context.system.scheduler.scheduleOnce(nonceDelay) {
-						//NOTE: this will execute outside of actor context
-						//but the queue should still create seq exec for this context
-						pipe.asyncSubmit(defaultReadBuffer)
-					}
-					false
-				}
+					true*/
+					keepReading
+				} else keepReading
 		}))
 	}
 

@@ -42,7 +42,7 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 	def jobTimeout = 5.minutes
 	val defaultReadSize: Int = 0x2000 // ?
 
-	val pollDelay = 10.millis
+	val pollDelay = 75.millis
 	val maxWorkQueue = 15
 
 	val controlIndex = 0.toShort // ?

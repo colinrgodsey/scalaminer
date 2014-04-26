@@ -30,10 +30,11 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 	lazy val selectedFreq = getFreqFor(freq)
 
-	override def commandDelay = 2.millis
+	override def commandDelay = 4.millis
 	override def defaultTimeout = 10000.millis
 
 	def nonceTimeout = 10.seconds
+	def nonceDelay = 75.millis
 
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only
@@ -211,7 +212,11 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 					sendWork()
 					true
 				} else {
-					readStarted = false
+					context.system.scheduler.scheduleOnce(nonceDelay) {
+						//NOTE: this will execute outside of actor context
+						//but the queue should still create seq exec for this context
+						pipe.asyncSubmit(defaultReadBuffer)
+					}
 					false
 				}
 		}))

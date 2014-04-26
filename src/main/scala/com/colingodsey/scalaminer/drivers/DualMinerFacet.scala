@@ -41,6 +41,8 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 	def nonceTimeout = if(isScrypt) scryptNonceReadTimeout else btcNonceReadTimeout
 	override def defaultTimeout = 1000.millis
 
+	val nonceDelay = 75.millis
+
 	val defaultReadSize: Int = 512
 
 	override def isFTDI = true
@@ -147,7 +149,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 					self ! StartWork
 					true
 				} else {
-					context.system.scheduler.scheduleOnce(15.millis) {
+					context.system.scheduler.scheduleOnce(nonceDelay) {
 						//NOTE: this will execute outside of actor context
 						//but the queue should still create seq exec for this context
 						pipe.asyncSubmit(defaultReadBuffer)

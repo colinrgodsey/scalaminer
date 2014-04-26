@@ -30,11 +30,10 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 	lazy val selectedFreq = getFreqFor(freq)
 
-	override def commandDelay = 4.millis
 	override def defaultTimeout = 10000.millis
 
-	def nonceTimeout = 10.seconds
-	def nonceDelay = 75.millis
+	def nonceTimeout = 5.seconds
+	def nonceDelay = if(isFTDI) 75.millis else 10.millis
 
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only
@@ -55,6 +54,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 		usbCommandInfo(intf, "detect") {
 			sendDataCommand(intf, detectBytes)()
 			readDataUntilLength(intf, READ_SIZE) { dat =>
+				self ! MinerMetrics.DevicePoll
+
 				if(dat.take(READ_SIZE - 4) != detectRespBytes) {
 					log.warning("Failed detect!")
 					failDetect()
@@ -196,7 +197,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 				if(buffer.length >= READ_SIZE && (buffer(0) == 0x55.toByte ||
 						buffer(1) == 0x20.toByte)) {
-					val nonce = buffer.slice(4, 8)//.reverse
+					val nonce = buffer.slice(4, 8) //.reverse
 					val iNonce = BigInt((0.toByte +: nonce).toArray)
 					val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
 
@@ -212,6 +213,9 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 					sendWork()
 					true
 				} else {
+					//discard....
+					if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
+
 					context.system.scheduler.scheduleOnce(nonceDelay) {
 						//NOTE: this will execute outside of actor context
 						//but the queue should still create seq exec for this context

@@ -36,7 +36,6 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 
 	override def isFTDI = true
 
-	override def commandDelay = 4.millis
 	override def defaultTimeout = 1.seconds
 
 	def jobTimeout = 5.minutes
@@ -233,6 +232,8 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 		flushRead(miningInterface)
 		sendDataCommand(miningInterface, QRES.getBytes)()
 		readLinesUntil(miningInterface, "OK") { lines =>
+			self ! MinerMetrics.DevicePoll
+
 			try {
 				val inProcess = lines(0).split(":")(1).toInt
 				val count = lines(1).split(":")(1).toInt

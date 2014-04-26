@@ -19,6 +19,7 @@ object MinerMetrics {
 	case object NonceStratumLow extends Metric
 	case object NonceStale extends Metric
 	case object Hashes extends Metric
+	case object DevicePoll extends Metric
 
 	case class MetricValue(metric: Metric, value: Long) extends Command
 
@@ -37,7 +38,8 @@ object MinerMetrics {
 		def purged = MetricsBlock(counters.map(pair => pair._1 -> pair._2.purged))
 
 		def prettyMetric(metric: Metric) = {
-			val c = counters.getOrElse(metric, Counter(defaultTimeFrame)).forTimeFrame(5.minutes)
+			val c = counters.getOrElse(metric,
+				Counter(defaultTimeFrame)).forTimeFrame(defaultTimeFrame)
 
 			val rate = metric match {
 				case Hashes => Hashing.prettyHashRate(c.rate, 1.second)
@@ -102,7 +104,13 @@ class MetricsActor extends Actor with ActorLogging {
 
 			val block = metricMap.getOrElse(sender, MetricsBlock())
 
-			metricMap += sender -> block.updateCounter(x)(_.add(1))
+			val timeFrame = x match {
+				case DevicePoll => 3.minutes
+				case _ => defaultTimeFrame
+			}
+
+			metricMap += sender -> block.updateCounter(x)(
+				_.add(1).forTimeFrame(timeFrame))
 		case Terminated(ref) =>
 			watching -= ref
 			metricMap -= ref

@@ -33,9 +33,10 @@ case class Counter(maxTimeFrame: FiniteDuration,
 	//def sum = samples.iterator.map(_.value).sum
 
 	def forTimeFrame(timeFrame: FiniteDuration) = {
-		require(timeFrame <= maxTimeFrame)
+		//require(timeFrame <= maxTimeFrame)
+		val tf = math.min(timeFrame.toSeconds, maxTimeFrame.toSeconds)
 
-		copy(maxTimeFrame = timeFrame).purged
+		copy(maxTimeFrame = tf.seconds).purged
 	}
 
 	//in seconds

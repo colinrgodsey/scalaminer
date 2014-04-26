@@ -36,7 +36,7 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 
 	def isFTDI: Boolean = false
 
-	def commandDelay = 4.millis
+	def commandDelay = 2.millis
 	def defaultTimeout = identity.timeout
 	def maxUsbQueueSize = 500
 

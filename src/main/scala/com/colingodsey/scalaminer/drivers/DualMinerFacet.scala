@@ -137,6 +137,8 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 				self ! StartWork
 				true
 			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
+				self ! MinerMetrics.DevicePoll
+
 				val dat = if(isFTDI) {
 					x.getData.drop(2)
 				} else x.getData

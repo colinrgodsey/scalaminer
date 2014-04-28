@@ -82,16 +82,6 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 
 		val deadline = Deadline.now + identity.timeout + 14.second
 
-		def postDetect() {
-			if(!isScrypt) {
-				sendCommands(nonceInterface, Constants.btc_close_nonce_unit) {
-					if(!cts) openBTCNonceUnits(Constants.DEFAULT_0_9V_BTC)()
-					else openBTCNonceUnits(Constants.DEFAULT_1_2V_BTC)()
-				}
-			}
-
-			after
-		}
 
 		sendCommands(nonceInterface, Seq(cmd))()
 		readDataUntilLength(nonceInterface, readSize) { dat =>
@@ -100,8 +90,18 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 				log.info(("golden nonce " + nonce.toList).toString)
 				require(nonce.toList == goldNonce.toList,
 					nonce.toList + " != " + goldNonce.toList)
-				runIrps(List(device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
-					SIO_SET_RTS_HIGH, 2.toByte)))(_ => postDetect())
+
+				def setHigh {
+					runIrps(List(device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
+						SIO_SET_RTS_HIGH, 2.toByte)))(_ => after)
+				}
+
+				if(!isScrypt) {
+					sendCommands(nonceInterface, Constants.btc_close_nonce_unit) {
+						if(!cts) openBTCNonceUnits(Constants.DEFAULT_0_9V_BTC)()
+						else openBTCNonceUnits(Constants.DEFAULT_1_2V_BTC)(setHigh)
+					}
+				} else setHigh
 			} else {
 				log.warning("nonceFail " + dat.toList)
 				failDetect()

@@ -10,17 +10,30 @@ object Counter {
 	type MetricValue = Float
 }
 
-case class Counter(maxTimeFrame: FiniteDuration,
-		samples: Queue[Sample] = Queue.empty,
-		started: Long = curTime,
-		total: Double = 0, sum: Double = 0) {
-	//require(maxTimeFrame > 0.seconds)
+trait Counter {
+	def started: Long
+	def maxTimeFrame: FiniteDuration
+	def sum: Double
+
+	def purged: Counter
+	def forTimeFrame(timeFrame: FiniteDuration): Counter
+	def add(value: Counter.MetricValue): Counter
 
 	def curTimeFrame = {
 		val earlyFrame = (curTime - started).seconds
 		if(earlyFrame < maxTimeFrame) earlyFrame
 		else maxTimeFrame
 	}
+
+	//in seconds
+	def rate = sum / curTimeFrame.toSeconds
+}
+
+case class ImmutableCounter(maxTimeFrame: FiniteDuration,
+		samples: Queue[Sample] = Queue.empty,
+		started: Long = curTime,
+		total: Double = 0, sum: Double = 0) extends Counter {
+	//require(maxTimeFrame > 0.seconds)
 
 	def purged = {
 		val minTime = curTime - maxTimeFrame.toSeconds
@@ -30,8 +43,6 @@ case class Counter(maxTimeFrame: FiniteDuration,
 		copy(samples = after, sum = sum - removedSum)
 	}
 
-	//def sum = samples.iterator.map(_.value).sum
-
 	def forTimeFrame(timeFrame: FiniteDuration) = {
 		//require(timeFrame <= maxTimeFrame)
 		val tf = math.min(timeFrame.toSeconds, maxTimeFrame.toSeconds)
@@ -39,13 +50,48 @@ case class Counter(maxTimeFrame: FiniteDuration,
 		copy(maxTimeFrame = tf.seconds).purged
 	}
 
-	//in seconds
-	def rate = sum / curTimeFrame.toSeconds
-
 	def add(value: Counter.MetricValue) =
 		copy(samples = samples :+ Sample(value),
 			total = total + value, sum = sum + value)
 
 	override def toString = s"Counter(frame = ${maxTimeFrame.toMinutes}m, " +
 			s"sum = $sum, rate = $rate)"
+}
+
+/** Destructive version of counter */
+class MutableCounter(var maxTimeFrame: FiniteDuration) extends Counter {
+	val started: Long = curTime
+
+	var total = 0.0
+	var sum = 0.0
+	val samples = scala.collection.mutable.Queue.empty[Sample]
+
+	def add(value: Counter.MetricValue) = {
+		samples enqueue Sample(value)
+		total += value
+		sum += value
+		this
+	}
+
+	def purge() = {
+		val minTime = curTime - maxTimeFrame.toSeconds
+		//val after = samples.dropWhile(_.time < minTime)
+
+		while(!samples.isEmpty && samples.front.time < minTime) {
+			val head = samples.front
+
+			sum -= head.value
+			samples.dequeue()
+		}
+	}
+
+	def forTimeFrame(timeFrame: FiniteDuration) = {
+		//require(timeFrame <= maxTimeFrame)
+		val tf = math.min(timeFrame.toSeconds, maxTimeFrame.toSeconds)
+
+		maxTimeFrame = tf.seconds
+		purged
+	}
+
+	def purged = { purge(); this }
 }

@@ -30,7 +30,7 @@ object MinerMetrics {
 
 	case class MetricsBlock(counters: Map[Metric, Counter] = Map.empty) {
 		def updateCounter(metric: Metric)(f: Counter => Counter) = {
-			val c = counters.getOrElse(metric, Counter(defaultTimeFrame))
+			val c = counters.getOrElse(metric, new MutableCounter(defaultTimeFrame))
 
 			copy(counters = counters + (metric -> f(c)))
 		}
@@ -39,7 +39,7 @@ object MinerMetrics {
 
 		def prettyMetric(metric: Metric) = {
 			val c = counters.getOrElse(metric,
-				Counter(defaultTimeFrame)).forTimeFrame(defaultTimeFrame)
+				new MutableCounter(defaultTimeFrame)).forTimeFrame(defaultTimeFrame)
 
 			val rate = metric match {
 				case Hashes => Hashing.prettyHashRate(c.rate, 1.second)

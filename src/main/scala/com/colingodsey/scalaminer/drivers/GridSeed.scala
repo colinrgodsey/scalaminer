@@ -24,6 +24,9 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 	def doInit()
 
+	//dual BTC/LTC or just LTC
+	def isDual = false
+
 	def freq = DEFAULT_FREQUENCY
 	def baud = DEFAULT_BAUD
 	def nChips = DEFAULT_CHIPS
@@ -32,7 +35,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 	override def defaultTimeout = 10000.millis
 
-	def nonceTimeout = 5.seconds
+	def nonceTimeout = if(isScrypt) GridSeed.scryptNonceReadTimeout
+	else GridSeed.btcNonceReadTimeout
 	def nonceDelay = if(isFTDI) 50.millis else 3.millis
 
 	def jobTimeout = 5.minutes
@@ -67,11 +71,17 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 					sendDataCommand(intf, chipResetBytes)()
 					sleepInf(intf, 200.millis)
 					//flushRead(intf)
-					sendDataCommands(intf, initBytes)()
-					sendDataCommands(intf, ltcResetBytes)()
+					if(isDual) {
+						sendDataCommands(intf, dualInitBytes)()
+						sendDataCommands(intf, dualResetBytes)()
+					} else {
+						sendDataCommands(intf, singleInitBytes)()
+						sendDataCommands(intf, singleResetBytes)()
+					}
+
 					sendDataCommand(intf, frequencyCommands(selectedFreq))()
 
-					if(altVoltage && fwVersion == 0x01140113) {
+					if(!isDual && altVoltage && fwVersion == 0x01140113) {
 						// Put GPIOA pin 5 into general function, 50 MHz output.
 						readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
 							val i = getInts(dat)(0)
@@ -88,7 +98,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 							}
 						}
 					} else if(altVoltage) {
-						log.error("Cannot set alt voltage for fw version " + fwVersion)
+						log.error("Cannot set alt voltage when in dual or " +
+								"for fw version " + fwVersion)
 						failDetect()
 					} else detected()
 				}
@@ -152,7 +163,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 			usbCommandInfo(intf, "sendWork") {
 				//flushRead(intf)
 
-				sendDataCommands(intf, ltcResetBytes)()
+				sendDataCommands(intf, singleResetBytes)()
 				sendDataCommand(intf, dat)()
 			}
 
@@ -222,9 +233,6 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 					hasRead = true
 
-					/*readStarted = false
-					sendWork()
-					true*/
 					keepReading
 				} else keepReading
 		}))
@@ -367,6 +375,8 @@ case object GridSeed extends USBDeviceDriver {
 	def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
 	val gsTimeout = 100.millis
+	val btcNonceReadTimeout = 11152.millis
+	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
 
 	case object GSD extends USBIdentity {
 		def drv = GridSeed
@@ -486,10 +496,25 @@ object GSConstants {
 	val detectBytes = "55aac000909090900000000001000000".fromHex
 	val detectRespBytes = "55aac00090909090".fromHex
 	val chipResetBytes = "55AAC000808080800000000001000000".fromHex
-	val initBytes = Seq("55AAC000C0C0C0C00500000001000000",
+
+	val singleInitBytes = Seq(
+		/*"55AAC000C0C0C0C00500000001000000",
 		"55AAEF020000000000000000000000000000000000000000",
-		"55AAEF3020000000").map(_.fromHex)
-	val ltcResetBytes = Seq("55AA1F2816000000",
+		"55AAEF3020000000").map(_.fromHex)*/
+		"55aac000101010100000000001000000",
+		"55aac000808080800000000001000000",
+		"55aac000c0c0c0c00500000001000000",
+		"55aaef020000000000000000000000000000000000000000",
+		"55aaef3020000000",
+		"55aa1f2814000000",
+		"55aa1f2817000000"
+	).map(_.fromHex)
+	val singleResetBytes = Seq("55AA1F2816000000",
+		"55AA1F2817000000").map(_.fromHex)
+
+	val dualInitBytes = Seq("55AA1F2814000000",
+		"55AA1F2817000000").map(_.fromHex)
+	val dualResetBytes = Seq("55AA1F2814000000",
 		"55AA1F2817000000").map(_.fromHex)
 
 	val freqNumbers = Seq(

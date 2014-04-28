@@ -111,21 +111,26 @@ class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, Ac
 	)
 
 	def getCTSSetFreq {
-		val ctsIrp = device.createUsbControlIrp(TYPE_IN, SIO_POLL_MODEM_STATUS_REQUEST,
-			0, 1)
+		val ctsIrp = device.createUsbControlIrp(TYPE_IN,
+			SIO_POLL_MODEM_STATUS_REQUEST, 0, 1)
 
 		val buf = Array.fill[Byte](2)(0)
 		ctsIrp.setData(buf)
 
 		//etiher 18,96 for dual, or 2,96 for ltc. 0x000x0002,96
 		runIrps(List(ctsIrp)) { data =>
-			def st = ((data(1) << 8) | (data(0) & 0xFF) & 0x10) == 0
+			def status = (data(1) << 8) | (data(0) & 0xFF)
+			def st = (status & 0x10) == 0
 			cts = st
 			//println("cts", data.toList, buf.toList, st)
 
-			val runCommand = if( /*data.length == 2 && */ !st)
+			val runCommand = if( /*data.length == 2 && */ !st) {
+				log.info("Setting 550M") //BTC / LTC
 				Constants.pll_freq_550M_cmd
-			else Constants.pll_freq_850M_cmd
+			} else {
+				log.info("Setting 850M") //LTC only
+				Constants.pll_freq_850M_cmd
+			}
 
 			sendDataCommands(interfaceA, runCommand) {
 				if(isDualIface0)

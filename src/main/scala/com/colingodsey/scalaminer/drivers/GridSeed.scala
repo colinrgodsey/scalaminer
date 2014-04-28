@@ -185,6 +185,18 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 		var buffer = ByteString.empty
 
+		def keepReading = {
+			//discard....
+			if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
+
+			context.system.scheduler.scheduleOnce(nonceDelay) {
+				//NOTE: this will execute outside of actor context
+				//but the queue should still create seq exec for this context
+				pipe.asyncSubmit(defaultReadBuffer)
+			}
+			false
+		}
+
 		addUsbCommandToQueue(intf, ({ () =>
 			timeoutTime.isCancelled
 			pipe.asyncSubmit(defaultReadBuffer)
@@ -207,34 +219,26 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 				buffer ++= dat
 
-				def keepReading = {
-					//discard....
-					if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
+				if(buffer.length >= READ_SIZE) {
+					if(buffer(0) == 0x55.toByte ||
+							buffer(1) == 0x20.toByte) {
+						val nonce = buffer.slice(4, 8) //.reverse
+						val iNonce = BigInt((0.toByte +: nonce).toArray)
+						val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
 
-					context.system.scheduler.scheduleOnce(nonceDelay) {
-						//NOTE: this will execute outside of actor context
-						//but the queue should still create seq exec for this context
-						pipe.asyncSubmit(defaultReadBuffer)
+						if(currentJob.isDefined) {
+							val job = currentJob.get
+
+							self ! Nonce(job.work, nonce, job.extranonce2)
+						}
+
+						hasRead = true
 					}
-					false
+
+					buffer = buffer.drop(READ_SIZE)
 				}
 
-				if(buffer.length >= READ_SIZE && (buffer(0) == 0x55.toByte ||
-						buffer(1) == 0x20.toByte)) {
-					val nonce = buffer.slice(4, 8) //.reverse
-					val iNonce = BigInt((0.toByte +: nonce).toArray)
-					val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
-
-					if(currentJob.isDefined) {
-						val job = currentJob.get
-
-						self ! Nonce(job.work, nonce, job.extranonce2)
-					}
-
-					hasRead = true
-
-					keepReading
-				} else keepReading
+				keepReading
 		}))
 	}
 

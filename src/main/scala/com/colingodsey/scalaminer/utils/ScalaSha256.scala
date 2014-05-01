@@ -32,7 +32,7 @@ final class ScalaSha256 extends Sha256 {
 			(h6 >>> 8).toByte, h6.toByte, (h7 >>> 24).toByte, 
 			(h7 >>> 16).toByte, (h7 >>> 8).toByte, h7.toByte)*/
 
-	def getResultSeq: IndexedSeq[Byte] = getResult()
+	def getResultSeq: IndexedSeq[Byte] = wrapByteArray(getResult())
 
 	def digestSeq() = {
 		val tail: Array[Byte] = padBuffer

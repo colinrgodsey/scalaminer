@@ -23,14 +23,124 @@ import com.colingodsey.scalaminer.Work
 import com.colingodsey.scalaminer.utils._
 import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
-import com.colingodsey.scalaminer.usb.USBManager.Interface
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
+import com.colingodsey.usb.{UsbBufferedDevice, Usb}
 
-trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorker  {
+trait DualMinerFacet extends NewUsbDeviceActor with AbstractMiner
+		with MetricsWorker with UsbBufferedDevice {
+	import DualMiner._
+
+	implicit def ec = system.dispatcher
+
+	def nonceInterface: Usb.Interface
+	def cts: Boolean
+	def isDualIface: Boolean
+
+	var lastJob: Option[Stratum.Job] = None
+	var goldNonceReceived = false
+
+	def goldNonce = if(isScrypt) Constants.ltc_golden_nonce.fromHex
+	else Constants.btc_golden_nonce.fromHex
+
+	def nonceReceive: Receive = {
+		//keep reading forever
+		case UsbBufferedDevice.BufferUpdated(ni) if ni == nonceInterface  =>
+			val buf = interfaceReadBuffer(nonceInterface)
+
+			if(buf.length >= 4) {
+				val nonce = buf.take(4).reverse
+				dropBuffer(nonceInterface, 4)
+
+				if(!goldNonceReceived) {
+					log.info("golden nonce " + nonce.toList)
+					require(nonce.toList == goldNonce.toList,
+						nonce.toList + " != " + goldNonce.toList)
+
+					goldNonceReceived = true
+				} else lastJob match {
+					case Some(Stratum.Job(work, id, merk, en2, _)) =>
+						self ! Nonce(work, nonce, en2)
+					case _ =>
+				}
+			}
+
+			startRead()
+	}
+
+	def normal: Receive = metricsReceive orElse workReceive orElse {
+		case Nonce => //goldNonceReceived
+		case StartWork =>
+			log.debug("startwork")
+			getWork(true) match {
+				case x if miningJob == None || x == None =>
+					log.info("No work yet")
+					context.system.scheduler.scheduleOnce(1.second, self, StartWork)
+				case Some(job: Stratum.Job) =>
+					//(self ? work).mapTo[Nonce].map(x => x -> job) pipeTo self
+					self ! job
+			}
+
+			bufferRead(nonceInterface)
+
+		case job: Stratum.Job =>
+			val work @ Work(ht, data, midstate, target) = job.work
+			val respondTo = sender
+
+			lastJob = Some(job)
+
+			self ! MinerMetrics.WorkStarted
+			log.debug("getting work")
+
+			val cmd = if(isScrypt) {
+				require(target.length == 32)
+				require(midstate.length == 32)
+				//require(data.length == 80)
+
+				val dat = ScalaMiner.BufferType.empty ++
+						"55aa1f00".fromHex ++
+						target ++ midstate ++ data.take(80) ++
+						Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
+						Seq.fill[Byte](8)(0)
+
+				require(dat.length == 160, dat.length + " != 160")
+
+				dat
+			} else {
+				val obDat = ScalaMiner.BufferType.empty ++ midstate ++ Seq.fill[Byte](20)(0) ++
+						data.drop(64).take(12)
+
+				val dat = ScalaMiner.BufferType.empty ++
+						"55aa0f00".fromHex ++
+						Seq.fill[Byte](4)(0) ++ obDat.take(32) ++
+						obDat.drop(52).take(12)
+
+				require(dat.length == 52, dat.length + " != 52")
+
+				dat
+			}
+
+			if(isScrypt && isDualIface) send(nonceInterface, Constants.ltc_init: _*)
+			else if(isScrypt) send(nonceInterface, Constants.ltc_restart: _*)
+
+			send(nonceInterface, cmd)
+	}
+
+	def startRead() {
+		bufferRead(nonceInterface)
+	}
+
+	abstract override def preStart() {
+		super.preStart()
+	}
+}
+
+
+/*
+trait DualMinerFacetOld extends USBDeviceActor with AbstractMiner with MetricsWorker  {
 	import FTDI._
 	import DualMiner._
 
-	def nonceInterface: USBManager.Interface
+	def nonceInterface: Usb.Interface
 	def cts: Boolean
 	def isDualIface0: Boolean
 
@@ -60,7 +170,7 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 		sendDataCommands(nonceInterface, bin.take(units + 1))()
 	}
 
-	def sendCommands(interface: Interface, cmds: Seq[String])(then: => Unit) {
+	def sendCommands(interface: Usb.Interface, cmds: Seq[String])(then: => Unit) {
 		val dats = cmds.filter(_ != "") map { cmd =>
 			cmd.fromHex
 		}
@@ -247,4 +357,4 @@ trait DualMinerFacet extends USBDeviceActor with AbstractMiner with MetricsWorke
 
 		super.postStop()
 	}
-}
+}*/

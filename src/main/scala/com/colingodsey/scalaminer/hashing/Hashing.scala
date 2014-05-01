@@ -50,8 +50,6 @@ object Hashing {
 
 		val ntime = (System.currentTimeMillis / 1000) + job.dTime
 
-		//merkleJobMap += merkleRoot.toSeq -> workJob
-
 		val serializedHeader = ScalaMiner.BufferType.empty ++
 				job.protoVersion ++ job.previousHash ++ merkleRoot ++
 				intToBytes(ntime.toInt) ++ job.nBits ++ intToBytes(0) ++ //enBytes ++

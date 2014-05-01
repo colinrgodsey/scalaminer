@@ -6,12 +6,11 @@ import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer._
 import scala.concurrent.duration._
 import com.colingodsey.scalaminer.utils._
-import com.colingodsey.scalaminer.usb.USBManager.{OutputEndpoint, InputEndpoint, Interface}
 import com.colingodsey.scalaminer.network.Stratum
 import akka.util.ByteString
 import javax.usb.event.UsbPipeDataEvent
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
-
+/*
 object GridSeedMiner {
 	sealed trait Command
 
@@ -393,10 +392,10 @@ case object GridSeed extends USBDeviceDriver {
 
 		def isMultiCoin = true
 
-		val interfaces = Set(Interface(1, Set(
+		val interfaces = Set(Usb.Interface(1, Set(
 			//Endpoint(UsbConst.ENDPOINT_TYPE_INTERRUPT, 8, epi(2), 0, false),
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0)
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0)
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
@@ -414,9 +413,9 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
-		val interfaces = Set(Interface(0, Set(
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0)
+		val interfaces = Set(Usb.Interface(0, Set(
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0)
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
@@ -433,9 +432,9 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
-		val interfaces = Set(Interface(0, Set(
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 1, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 2, 0)
+		val interfaces = Set(Usb.Interface(0, Set(
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 1, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
@@ -453,9 +452,9 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
-		val interfaces = Set(Interface(0, Set(
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+		val interfaces = Set(Usb.Interface(0, Set(
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
 		def usbDeviceActorProps(device: UsbDevice,
@@ -616,4 +615,4 @@ object GSConstants {
 
 		"55aaef000500e086"
 	).map(_.fromHex)
-}
+}*/

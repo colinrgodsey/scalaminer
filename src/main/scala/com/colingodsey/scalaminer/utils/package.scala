@@ -6,6 +6,8 @@ import akka.util.ByteString
 import com.typesafe.config.Config
 import scala.concurrent.duration.{FiniteDuration, Duration}
 import java.util.concurrent.TimeUnit
+import java.nio.ByteBuffer
+import scala.collection.IndexedSeqOptimized
 
 /**
  * Created by crgodsey on 4/10/14.
@@ -93,5 +95,18 @@ package object utils {
 
 			FiniteDuration(dur.toNanos, TimeUnit.NANOSECONDS)
 		}
+	}
+
+	implicit final class ByteBufferSeq(buf: ByteBuffer) extends IndexedSeq[Byte]
+			with IndexedSeqOptimized[Byte, IndexedSeq[Byte]] {
+		def apply(idx : Int): Byte = buf.get(idx)
+		def length = buf.remaining
+
+		override def stringPrefix: String = "ByteBufferSeq"
+
+		override def seq = this
+
+		//override def slice(start: Int, end: Int): IndexedSeq[Byte] = Cord(this).slice(start, end)
+
 	}
 }

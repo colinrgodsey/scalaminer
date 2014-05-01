@@ -9,9 +9,11 @@ import akka.actor._
 import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer.{ScalaMiner}
 import scala.util.Try
-import com.colingodsey.scalaminer.usb.USBManager.Interface
 import scala.collection.immutable.Queue
 import com.colingodsey.scalaminer.metrics.MinerMetrics
+import com.colingodsey.usb.Usb
+import akka.io.IO
+import akka.util.ByteString
 
 object USBDeviceActor {
 	//Start func, then continue/finalization func
@@ -25,6 +27,55 @@ object USBDeviceActor {
 	case object CloseDevice
 }
 
+trait NewUsbDeviceActor extends Actor with ActorLogging with Stash {
+	val deviceId: Usb.DeviceId
+	def identity: USBIdentity
+
+	def isFTDI: Boolean
+	def readDelay: FiniteDuration
+
+	def defaultTimeout = identity.timeout
+
+	private implicit def ec = context.system.dispatcher
+	private implicit def system = context.system
+
+	var deviceRef: ActorRef = context.system.deadLetters
+
+	def send(interface: Usb.Interface, data: Seq[Byte]*) =
+		/*deviceRef ! Usb.SendBulkTransfer(interface,
+			data.foldLeft(ByteString.empty)(_ ++ _))*/
+		for(x <- data) deviceRef ! Usb.SendBulkTransfer(interface, x)
+
+	def waitingOnDevice(after: => Unit): Receive = {
+		case Usb.DeviceRef(`deviceId`, Some(ref)) =>
+			deviceRef = ref
+			context watch ref
+			context.unbecome()
+			unstashAll()
+		case Usb.DeviceRef(`deviceId`, None) =>
+			sys.error("no DeviceRef found!")
+		case _ => stash()
+	}
+
+	def getDevice(after: => Unit) {
+		IO(Usb) ! Usb.RefFor(deviceId)
+		context.become(waitingOnDevice(after), false)
+	}
+
+	abstract override def preStart() {
+		super.preStart()
+
+		log.info(s"Starting $identity at $deviceId")
+	}
+
+	abstract override def postStop() {
+		super.postStop()
+
+		log.info(s"Stopping $identity at $deviceId")
+	}
+}
+/*
+@deprecated
 trait USBDeviceActor extends Actor with ActorLogging with Stash {
 	import USBDeviceActor._
 
@@ -524,3 +575,4 @@ trait USBDeviceActor extends Actor with ActorLogging with Stash {
 		device.removeUsbDeviceListener(devListener)
 	}
 }
+*/

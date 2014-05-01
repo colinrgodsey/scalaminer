@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
+
+<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/">
+    <appender name="console" class="org.apache.log4j.ConsoleAppender">
+        <param name="Threshold" value="INFO"/>
+        <param name="Target" value="System.out" />
+        <layout class="org.apache.log4j.EnhancedPatternLayout">
+            <param name="ConversionPattern"
+                   value="%d{ISO8601} %p (%c{1.})[%X{akkaSource}] - %m%n" />
+        </layout>
+    </appender>
+
+    <appender name="fileAppender" class="org.apache.log4j.rolling.RollingFileAppender">
+        <param name="file" value="scalaminer.log" />
+        <param name="Threshold" value="WARN"/>
+
+        <rollingPolicy class="org.apache.log4j.rolling.FixedWindowRollingPolicy">
+            <param name="fileNamePattern" value="scalaminer.%i" />
+            <param name="maxIndex" value="10" />
+        </rollingPolicy>
+
+        <triggeringPolicy class="org.apache.log4j.rolling.SizeBasedTriggeringPolicy">
+            <param name="maxFileSize" value="104857600" />
+        </triggeringPolicy>
+
+        <layout class="org.apache.log4j.EnhancedPatternLayout">
+            <param name="ConversionPattern"
+                   value="%d{ISO8601} %p (%c{1.})[%X{akkaSource}] - %m%n" />
+        </layout>
+    </appender>
+
+    <root>
+        <priority value="INFO" />
+        <appender-ref ref="console" />
+        <appender-ref ref="fileAppender" />
+    </root>
+</log4j:configuration>

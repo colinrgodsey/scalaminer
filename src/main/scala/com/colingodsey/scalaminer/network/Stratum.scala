@@ -18,14 +18,19 @@ import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import scala.concurrent._
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import com.colingodsey.scalaminer.utils._
+import akka.io.Tcp.ConnectionClosed
 
 object Stratum {
-	case class Subscribe(ref: ActorRef)
-	case class UnSubscribe(ref: ActorRef)
-	case object WorkAccepted
-	case class SubmitStratumJob(params: Seq[JsValue])
-	case class Difficulty(diff: Int)
-	case class StratumError(eid: Int, msg: String)
+	sealed trait Command
+
+	case class Subscribe(ref: ActorRef) extends Command
+	case class UnSubscribe(ref: ActorRef) extends Command
+	case class SubmitStratumJob(params: Seq[JsValue]) extends Command
+	case class Difficulty(diff: Int) extends Command
+	case class StratumError(eid: Int, msg: String) extends Command
+	case object WorkAccepted extends Command
+
+	case object HealthCheck extends Command
 
 	case class Job(work: Work, id: String,
 			merkle_hash: Seq[Byte], extranonce2: Seq[Byte],
@@ -49,8 +54,6 @@ object Stratum {
 		lazy val protoVersion = versionStr.fromHex
 		lazy val nBits = nBitsStr.fromHex
 		lazy val merkleBranches = merkleBranchStrs.map(_.fromHex).toStream
-
-
 	}
 
 	case class ExtraNonce(hashType: ScalaMiner.HashType, extranonce1: Seq[Byte], extranonce2Size: Int)
@@ -69,6 +72,11 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 		extends Actor with ActorLogging with Stash {
 	import Stratum._
 
+	private implicit def ec = context.system.dispatcher
+
+	val connectTimeout = 5.seconds
+	val inactiveTimeout = 2.minutes
+
 	var messageId = 1
 	var difficulty = 1
 	var connectionActor = context.system.deadLetters
@@ -79,10 +87,17 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 	var extranonce2Size: Int = 0
 	var lastJob: Option[MiningJob] = None
 
+	var healthTimer = context.system.scheduler.schedule(
+		20.seconds, 10.seconds, self, HealthCheck)
+	var lastRecv = Deadline.now
+
 	def extraNonce = ExtraNonce(hashType, extranonce1, extranonce2Size)
 
-	tcpManager ! Tcp.Connect(new InetSocketAddress(
-		InetAddress.getByName(conn.host), conn.port), timeout = Some(5.seconds))
+	def connect() {
+		tcpManager ! Tcp.Connect(new InetSocketAddress(
+			InetAddress.getByName(conn.host), conn.port), timeout = Some(connectTimeout))
+		context become waitingConnect
+	}
 
 	def receive = waitingConnect
 
@@ -107,6 +122,9 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 	}
 
 	def dataReceive: Receive = {
+		case HealthCheck =>
+			if(-lastRecv.timeLeft < inactiveTimeout)
+				sys.error("Stratum connection inactive!!")
 		case Tcp.CommandFailed(cmd) =>
 			sys.error("TCP command failed " + cmd)
 		case x: Tcp.ConnectionClosed =>
@@ -173,6 +191,8 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 
 	def receiveResponses: Receive = {
 		case x @ JSONResponse(js) if x.isBroadcast =>
+			lastRecv = Deadline.now
+
 			js.fields("method").convertTo[String] match {
 				case "mining.set_difficulty" =>
 					difficulty = js.fields("params").convertTo[Seq[Int]].head
@@ -197,6 +217,8 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 					log.info("Broadcast " + js)
 			}
 		case JSONResponse(js) =>
+			lastRecv = Deadline.now
+
 			log.debug("Response " + js)
 
 			val id = js.fields("id").convertTo[Int]
@@ -243,10 +265,17 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 
 	def normal = dataReceive orElse receiveResponses
 
+	override def preStart() {
+		super.preStart()
+
+		connect()
+	}
+
 	override def postStop() {
 		super.postStop()
 		context stop connectionActor
 		context stop self
+		healthTimer.cancel()
 	}
 }
 

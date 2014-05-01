@@ -23,10 +23,9 @@ import com.colingodsey.scalaminer.Work
 import com.colingodsey.scalaminer.utils._
 import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
-import com.colingodsey.scalaminer.usb.USBManager.{InputEndpoint, OutputEndpoint, Interface}
 import scala.concurrent.Future
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
-
+/*
 class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef],
 		val identity: USBIdentity)
 		extends AbstractMiner with USBDeviceActor with MetricsWorker {
@@ -260,7 +259,8 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 				}
 			} catch {
 				case e: Throwable =>
-					log.error(e, "failed parsing " + lines.toString)
+					//log.error(e, "failed parsing " + lines.toString)
+					log.debug("failed parsing " + lines.toString)
 					//flushWork()
 					flushRead(miningInterface)
 			}
@@ -308,7 +308,8 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 					temp2 /= 1.63
 				} catch {
 					case x: Throwable =>
-						log.error(x, "failed parsing temp " + lines1)
+						//log.error(x, "failed parsing temp " + lines1)
+						log.info("failed parsing temp " + lines1)
 				}
 
 				if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
@@ -487,9 +488,9 @@ case object BFLSC extends USBDeviceDriver {
 
 		def isMultiCoin = true
 
-		val interfaces = Set(Interface(0, Set(
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+		val interfaces = Set(Usb.Interface(0, Set(
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
@@ -508,9 +509,9 @@ case object BFLSC extends USBDeviceDriver {
 
 		def isMultiCoin = true
 
-		val interfaces = Set(Interface(0, Set(
-			InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+		val interfaces = Set(Usb.Interface(0, Set(
+			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
+			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: UsbDevice,
@@ -683,3 +684,4 @@ case object BFLSC extends USBDeviceDriver {
 		val REINIT_TIME_MAX = 3000000
 	}
 }
+*/

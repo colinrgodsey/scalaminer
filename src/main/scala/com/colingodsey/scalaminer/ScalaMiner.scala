@@ -8,7 +8,7 @@ import java.io.{ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.usb._
-import com.colingodsey.scalaminer.drivers.{GridSeed, BFLSC, DualMiner}
+import com.colingodsey.scalaminer.drivers.{DualMiner}
 import akka.io.{ IO, Tcp }
 import com.colingodsey.scalaminer.network.Stratum.StratumConnection
 import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
@@ -24,6 +24,7 @@ import com.colingodsey.scalaminer.Work
 import scala.concurrent.duration.TimeUnit
 import scala.util.{Failure, Success}
 import scala.concurrent.Await
+import com.colingodsey.usb.Usb
 
 object ScalaMiner {
 	type BufferType = ByteString
@@ -46,9 +47,9 @@ object ScalaMinerMain extends App {
 	val smConfig = config.getConfig("com.colingodsey.scalaminer")
 	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
-	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
+	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner)//, BFLSC, GridSeed)
 
-	val tcpManager = IO(Tcp)
+	lazy val tcpManager = IO(Tcp	)
 
 	def readStConn(cfg: Config) = {
 		if(cfg.hasPath("host")) {
@@ -59,9 +60,9 @@ object ScalaMinerMain extends App {
 
 	val metricsRef = system.actorOf(Props[MetricsActor], name = "metrics")
 
-	val usbManager = if(smConfig.hasPath("devices.usb.enabled") &&
+	val usbDeviceManager = if(smConfig.hasPath("devices.usb.enabled") &&
 			smConfig.getBoolean("devices.usb.enabled")) {
-		val ref = system.actorOf(Props(classOf[USBManager],
+		val ref = system.actorOf(Props(classOf[IOUsbDeviceManager],
 			smConfig getConfig "devices.usb"), name = "usb-manager")
 		ref.tell(MinerMetrics.Subscribe, metricsRef)
 		usbDrivers.foreach(x => ref ! USBManager.AddDriver(x))
@@ -73,8 +74,8 @@ object ScalaMinerMain extends App {
 		val connRef = system.actorOf(Props(classOf[StratumActor],
 			tcpManager, conn, ScalaMiner.Scrypt), name = "stratum-scrypt")
 
-		if(usbManager.isDefined)
-			usbManager.get ! USBManager.AddStratumRef(ScalaMiner.Scrypt, connRef)
+		if(usbDeviceManager.isDefined)
+			usbDeviceManager.get ! USBManager.AddStratumRef(ScalaMiner.Scrypt, connRef)
 	}
 
 	if(smConfig.hasPath("stratum.sha256")) {
@@ -82,8 +83,8 @@ object ScalaMinerMain extends App {
 		val connRef = system.actorOf(Props(classOf[StratumActor],
 			tcpManager, conn, ScalaMiner.SHA256), name = "stratum-sha256")
 
-		if(usbManager.isDefined)
-			usbManager.get ! USBManager.AddStratumRef(ScalaMiner.SHA256, connRef)
+		if(usbDeviceManager.isDefined)
+			usbDeviceManager.get ! USBManager.AddStratumRef(ScalaMiner.SHA256, connRef)
 
 		if(smConfig.hasPath("stratum-proxy") && smConfig.getBoolean("stratum-proxy.enabled")) {
 			val stratumProxy = system.actorOf(Props(classOf[StratumProxy], connRef,

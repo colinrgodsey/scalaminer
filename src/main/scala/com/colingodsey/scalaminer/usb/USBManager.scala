@@ -2,13 +2,17 @@ package com.colingodsey.scalaminer.usb
 
 import javax.usb.{UsbHostManager, UsbHub, UsbDevice, UsbConst}
 import scala.concurrent.duration._
-import scala.concurrent.blocking
+import scala.concurrent.{Future, blocking}
 import scala.collection.JavaConversions._
 import akka.actor._
+import akka.pattern._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
 import com.colingodsey.scalaminer.metrics.MinerMetrics
 import com.typesafe.config.Config
+import com.colingodsey.usb.Usb
+import akka.util.Timeout
+import akka.io.IO
 
 
 object USBUtils {
@@ -36,15 +40,21 @@ trait USBIdentity extends MinerIdentity {
 	def latency: FiniteDuration = 32.millis
 	def name: String = toString
 
-	def interfaces: Set[USBManager.Interface]
+	def interfaces: Set[Usb.Interface]
 
-	def usbDeviceActorProps(device: UsbDevice,
+	def usbDeviceActorProps(device: Usb.DeviceId,
 			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
 
 	def matches(device: UsbDevice) = {
 		val desc = device.getUsbDeviceDescriptor
 
 		desc.idVendor == idVendor && desc.idProduct == idProduct
+	}
+
+	def matches(device: Usb.DeviceId) = {
+		val desc = device.desc
+
+		desc.vendor == idVendor && desc.product == idProduct
 	}
 }
 
@@ -61,39 +71,101 @@ object USBManager {
 	case object ScanDevices extends Command
 
 	case class RemoveRef(ref: ActorRef) extends Command
-
-	object Interface {
-		def apply(interface: Short, endpoints: Set[Endpoint]): Interface =
-			Interface(interface, endpoints, interface)
-	}
-
-	case class Interface(interface: Short, endpoints: Set[Endpoint], ctrlInterface: Int)
-
-	case class InputEndpoint(att: Byte, size: Short, inputNum: Byte,
-			maxPacketSize: Short) extends Endpoint {
-		val ep = (UsbConst.ENDPOINT_DIRECTION_IN | inputNum).toByte
-		def isInput: Boolean = true
-		def isOutput: Boolean = false
-	}
-
-	case class OutputEndpoint(att: Byte, size: Short, outputNum: Byte,
-			maxPacketSize: Short) extends Endpoint {
-		val ep = (UsbConst.ENDPOINT_DIRECTION_OUT | outputNum).toByte
-		def isInput: Boolean = false
-		def isOutput: Boolean = true
-	}
-
-	trait Endpoint {
-		def att: Byte
-		def size: Short
-		def ep: Byte
-		def maxPacketSize: Short
-		def isInput: Boolean
-		def isOutput: Boolean
-	}
 }
 
-class USBManager(config: Config) extends Actor with ActorLogging with Stash {
+class IOUsbDeviceManager(config: Config)
+		extends Actor with ActorLogging with Stash {
+	import USBManager._
+
+	implicit def to = Timeout(2.seconds)
+	implicit def system = context.system
+	private implicit def ec = context.system.dispatcher
+
+	lazy val libUsbHost: ActorRef = IO(Usb)
+
+	var usbDrivers: Set[USBDeviceDriver] = Set.empty
+	var workerMap: Map[Usb.DeviceId, ActorRef] = Map.empty
+	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
+	var failedIdentityMap: Map[Usb.DeviceId, Set[USBIdentity]] = Map.empty
+	var metricsSubs = Set[ActorRef]()
+	var devices = Set.empty[Usb.DeviceId]
+	var pollQueued = false
+
+	val identityResetTimer = context.system.scheduler.schedule(
+		1.minute, config getDur "identity-reset-time", self, IdentityReset)
+
+	case class DeviceRefForIdentity(id: Usb.DeviceId, ref: ActorRef, identity: USBIdentity)
+	case object PollDevices
+
+	def maybePoll(): Unit = if(!pollQueued) {
+		pollQueued = true
+		self ! PollDevices
+	}
+
+	def receive = {
+		//got an identity and a device ref
+		case DeviceRefForIdentity(id, deviceRef, identity) if !workerMap.contains(id) =>
+			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
+			val name = identity.name + "." + id.idKey
+			val ref = context.actorOf(props, name = name)
+
+			context watch ref
+
+			metricsSubs.foreach(ref.tell(MinerMetrics.Subscribe, _))
+
+			workerMap += id -> ref
+		case Usb.DeviceConnected(id) =>
+			devices += id
+
+			self ! PollDevices
+		case PollDevices =>
+			pollQueued = false
+
+			val matches = for {
+				id <- devices
+				if !id.desc.isHub
+				failedSet = failedIdentityMap.getOrElse(id, Set.empty)
+				if !workerMap.contains(id)
+				driver <- usbDrivers
+				identity <- driver.identities
+				if !failedSet(identity)
+				if identity matches id
+				if stratumEndpoints contains driver.hashType
+			} yield id -> identity
+
+			if(!matches.isEmpty) {
+				val (id, identity) = matches.head
+
+				val refFut = (libUsbHost ? Usb.RefFor(id)).map {
+					case Usb.DeviceRef(`id`, Some(deviceRef)) =>
+						DeviceRefForIdentity(id, deviceRef, identity)
+					case Usb.DeviceRef(`id`, None) =>
+						sys.error("Failed to get device ref! Not found.")
+					case x => sys.error("Unknown refFor response " + x)
+				}.recover {
+					case x: Throwable =>
+						log.error(x, "Failed to start device")
+						()
+				}
+
+				refFut pipeTo self
+			}
+		case Usb.DeviceDisconnected(id) =>
+			devices -= id
+
+			workerMap.get(id) foreach context.stop
+	}
+
+	override def preStart() {
+		super.preStart()
+
+		context watch libUsbHost
+
+		libUsbHost ! Usb.Subscribe
+	}
+}
+/*
+class USBManagerJavax(config: Config) extends Actor with ActorLogging with Stash {
 	import USBManager._
 
 	implicit def ec = context.dispatcher
@@ -194,4 +266,4 @@ class USBManager(config: Config) extends Actor with ActorLogging with Stash {
 		scanTimer.cancel()
 		identityResetTimer.cancel()
 	}
-}
+}*/

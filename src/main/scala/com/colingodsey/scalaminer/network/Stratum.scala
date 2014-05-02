@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.network
 
 import scala.concurrent.duration._
@@ -67,7 +80,7 @@ object Stratum {
 	}
 }
 
-class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
+class StratumActor(conn: Stratum.StratumConnection,
 			hashType: ScalaMiner.HashType)
 		extends Actor with ActorLogging with Stash {
 	import Stratum._
@@ -75,7 +88,9 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 	private implicit def ec = context.system.dispatcher
 
 	val connectTimeout = 5.seconds
-	val inactiveTimeout = 2.minutes
+	val inactiveTimeout = 20.minutes
+
+	def tcpManager = IO(Tcp)(context.system)
 
 	var messageId = 1
 	var difficulty = 1
@@ -123,12 +138,15 @@ class StratumActor(tcpManager: ActorRef, conn: Stratum.StratumConnection,
 
 	def dataReceive: Receive = {
 		case HealthCheck =>
-			if(-lastRecv.timeLeft < inactiveTimeout)
+			if(lastRecv.isOverdue && -lastRecv.timeLeft > inactiveTimeout)
 				sys.error("Stratum connection inactive!!")
 		case Tcp.CommandFailed(cmd) =>
 			sys.error("TCP command failed " + cmd)
 		case x: Tcp.ConnectionClosed =>
-			sys.error("Connection closed! " + x)
+			//TODO: on stratum restart, suscribers arent carried over
+			log.warning("Connection closed! " + x)
+			context unwatch connectionActor
+			connect()
 		case Tcp.Received(data) =>
 			val str = new String(data.toArray, "UTF8")
 

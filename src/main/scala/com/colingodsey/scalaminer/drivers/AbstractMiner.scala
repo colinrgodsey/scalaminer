@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.drivers
 
 import scala.concurrent.duration._
@@ -142,10 +155,11 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	}
 
 	def stratumUnSubscribe(ref: ActorRef) {
-		require(subRef != context.system.deadLetters, "Not subscribed to " + ref)
-		context unwatch ref
-		ref ! Stratum.UnSubscribe(self)
-		subRef = context.system.deadLetters
+		if(subRef != context.system.deadLetters) {
+			context unwatch ref
+			ref ! Stratum.UnSubscribe(self)
+			subRef = context.system.deadLetters
+		}
 	}
 
 	def getExtraNonce = {

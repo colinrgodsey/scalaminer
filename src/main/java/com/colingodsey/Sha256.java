@@ -37,10 +37,6 @@ this exception to your version of the library, but you are not
 obligated to do so.  If you do not wish to do so, delete this
 exception statement from your version.  */
 
-
-//import gnu.java.security.Registry;
-//import gnu.java.security.util.Util;
-
 /**
  * Implementation of SHA2-1 [SHA-256] per the IETF Draft Specification.
  * <p>
@@ -89,8 +85,6 @@ public class Sha256
     /** Trivial 0-arguments constructor. */
     public Sha256()
     {
-        //super(Registry.SHA256_HASH, 32, BLOCK_SIZE);
-        //this.name = Registry.SHA256_HASH;
         this.hashSize = 32;
         this.blockSize = BLOCK_SIZE;
         this.buffer = new byte[blockSize];
@@ -189,23 +183,6 @@ public class Sha256
         h7 = 0x5be0cd19;
     }
 
-    public boolean selfTest()
-    {
-        /*if (valid == null)
-        {
-            Sha256 md = new Sha256();
-            md.update((byte) 0x61); // a
-            md.update((byte) 0x62); // b
-            md.update((byte) 0x63); // c
-            String result = Util.toString(md.digest());
-            valid = Boolean.valueOf(DIGEST0.equals(result));
-        }
-        return valid.booleanValue();*/
-
-        return true; // errrr
-    }
-
-    //TODO: WHHYYYY is this sync, and why is it using a shared buffer whhyyyyy
     private static synchronized final int[] sha(int hh0, int hh1, int hh2,
                                                 int hh3, int hh4, int hh5,
                                                 int hh6, int hh7, byte[] in,

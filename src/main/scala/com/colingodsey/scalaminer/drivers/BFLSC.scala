@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.drivers
 
 import javax.usb._
@@ -25,322 +38,176 @@ import spray.json.DefaultJsonProtocol._
 import com.lambdaworks.crypto.SCrypt
 import scala.concurrent.Future
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
-/*
-class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef],
-		val identity: USBIdentity)
-		extends AbstractMiner with USBDeviceActor with MetricsWorker {
+import com.colingodsey.io.usb.{BufferedReader, Usb}
+import com.colingodsey.scalaminer.ScalaMiner.HashType
+import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+
+class BFLSC(val deviceId: Usb.DeviceId,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef],
+		val identity: USBIdentity) extends UsbDeviceActor with AbstractMiner
+		with MetricsWorker with BufferedReader {
 	import FTDI._
 	import BFLSC._
 	import Constants._
 
-	override def isFTDI = true
-
-	override def defaultTimeout = 1.seconds
-
-	def jobTimeout = 5.minutes
-	val defaultReadSize: Int = 0x2000 // ?
-
-	val pollDelay = 75.millis
+	def pollDelay = RES_TIME - latency
 	val maxWorkQueue = 15
+	def jobTimeout = 5.minutes
 
-	val controlIndex = 0.toShort // ?
-	//forgot which of these was 'device'
-	lazy val miningInterface = identity.interfaces.filter(_.interface == 0).head
-	val latencyVal = BAS_LATENCY
-
-	val initIrps = List(
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_LATENCY, latencyVal, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_BAS, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_BAS,
-			((INDEX_BAUD_BAS & 0xff00) | controlIndex).toShort),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
-	)
-
-	//context.system.scheduler.scheduleOnce(3.seconds)(context stop self)
+	def readDelay = latency
+	def readSize = 512
+	def isFTDI = true
+	override def hashType: HashType = ScalaMiner.SHA256
+	val controlIndex = 0.toShort
 
 	var workSubmitted = 0
-	//var inProcess = 0
+	var bflInfo: Option[BFLInfo] = None
 	var midstateToJobMap: Map[Seq[Byte], Stratum.Job] = Map.empty
-	var resultTimer: Option[Cancellable] = None
-
+	var latency = BAS_LATENCY
 	var temp1 = 1.0
 	var temp2 = 1.0
 	var overHeating = false
 
+	implicit def ec = system.dispatcher
+
 	def curMaxTemp = math.max(temp1, temp2)
 
-	def maybeStartResultsTimer() = {
-		if(resultTimer == None)
-			resultTimer = Some apply context.system.scheduler.scheduleOnce(
-				pollDelay, self, GetResults)
-	}
+	lazy val intf = identity.interfaces.filter(_.interface == 0).head
 
-	def getInfo(cb: => Unit) {
-		usbCommandInfo(miningInterface, "getInfo") {
-			//flushRead(miningInterface)
-			sendDataCommand(miningInterface, DETAILS.getBytes)()
-			readLinesUntil(miningInterface, "OK") { lines =>
-				val info = BFLInfo(lines)
-				log.info(info.toString)
-				cb ==()
-			}
-		}
-	}
+	case class ReceiveLine(line: String)
 
-	def identify(cb: => Unit) {
-		usbCommandInfo(miningInterface, "identity") {
-			//flushRead(miningInterface)
-			sendDataCommand(miningInterface, IDENTIFY.getBytes)()
-			readLine(miningInterface) { line =>
-				log.info(line)
-				cb ==()
-			}
-		}
-	}
+	val pollTimer = context.system.scheduler.schedule(3.seconds, pollDelay, self, GetResults)
+	val jobTimeoutTimer = context.system.scheduler.schedule(
+		1.seconds, 45.seconds, self, JobTimeouts)
 
-	def queueJob(job: BFLFullRangeJob)(after: => Unit) {
-		if(workSubmitted < maxWorkQueue) {
-			workSubmitted += 1
-			flushRead(miningInterface)
-			usbCommandInfo(miningInterface, "queueJob") {
-				sendDataCommand(miningInterface, QJOB.getBytes)()
-				readLine(miningInterface) { line =>
-					def bail() = {
-						after ==()
-						true
-					}
+	def responseReceive: Receive = usbBufferReceive orElse {
+		case BufferedReader.BufferUpdated(`intf`) =>
+			val buf = interfaceReadBuffer(intf)
 
-					line match {
-						case "OK" =>
-							insertCommands(miningInterface) {
-								sendDataCommand(miningInterface, job.payload.toArray)()
-								readLine(miningInterface) { line =>
-									log.debug("queueJob " + line)
-									if(line == "OK:QUEUED") {
-										self ! MinerMetrics.WorkStarted
-										//workSubmitted += 1
-									} else log.warning("bad queue resp " + line)
-									after ==()
-								}
-							}
-							true
-						case "ERR:QUEUE FULL" =>
-							log.info("queue full")
-							//flushWork(after)
-							bail()
-						case x =>
-							log.warning("Unknown queue resp " + x)
-							bail()
-					}
+			if(buf.length > 0) {
+				log.debug("Buffer updated with len " + buf.length)
+
+				val idx = buf indexOf '\n'.toByte
+
+				if(idx >= 0) {
+					val left = buf slice (0, idx)
+					dropBuffer(intf, idx + 1)
+
+					val line = new String(left.toArray, "ASCII")
+
+					log.debug("New line " + line)
+
+					self ! ReceiveLine(line)
 				}
 			}
-		} else after
 	}
 
-	def startJob(job: BFLNonceJob) {
-		usbCommandInfo(miningInterface, "startJob") {
-			sendDataCommand(miningInterface, SENDRANGE.getBytes)()
-			readLine(miningInterface) { lines1 =>
-				log.info(lines1)
-				true
-			}
-			sendDataCommand(miningInterface, job.payload.toArray)()
-			readLine(miningInterface) { line =>
-				log.info("startJob " + line)
-				true
-			}
-		}
+	def receive = {
+		case NonTerminated(_) => stash()
 	}
 
-	override def onReadTimeout() {
-		log.error("Read data timeout! " + usbCommandTags)
-		self ! MinerMetrics.WorkTimeout
-		if(workSubmitted <= 0) context stop self
-		maybeStartResultsTimer()
-		flushRead(miningInterface)
-		workSubmitted = 0
+	def flushWork() {
+		send(intf, QFLUSH.getBytes)
 	}
 
-	def flushWork(after: => Unit) = {
-		maybeStartResultsTimer()
-
-		usbCommandInfo(miningInterface, "flushWork") {
-			flushRead(miningInterface)
-			sendDataCommand(miningInterface, QFLUSH.getBytes)()
-			sleepInf(miningInterface, 8.millis)
-			readLine(miningInterface, softFailTimeout = Some(1.second),
-				timeout = 3.seconds) { line =>
-				if(line == "" || line.substring(0, 2) != "OK") {
-					workSubmitted = 0
-					log.warning("Flush failed with " + line)
-				} else {
-					val flushed = line.split(" ")(1).toInt
-					log.info("Flushed " + flushed)
-					workSubmitted = 0
-					self ! MinerMetrics.MetricValue(MinerMetrics.WorkCanceled, flushed)
-				}
-				after ==()
-				true
-			}
-			//flushRead(miningInterface)
-
-			sendDataCommand(miningInterface, QRES.getBytes)()
-		}
-		flushRead(miningInterface)
+	def getTemp() {
+		send(intf, TEMPERATURE.getBytes)
 	}
 
-	//might never fire after
-	def addWork(after: => Unit) {
-		val workOpt = getWork(true)
+	def getResults() = if(!overHeating) {
+		send(intf, QRES.getBytes)
+		context become (normalBaseReceive orElse {
+			case _: BFLSCNonCriticalCommand => //discard
+			case ReceiveLine(line) if line.startsWith(INPROCESS) =>
+				val n = line.drop(INPROCESS.length).toInt
 
-		if(workOpt.isDefined) {
-			val sjob = workOpt.get
-			val work = sjob.work
-			val eninfo = extraNonceInfo.get
+				log.debug("Inprocess " + n)
+			//expectingRes = false
+			case ReceiveLine(line) if line.startsWith(RESULT) =>
+				val n = line.drop(RESULT.length).toInt
 
-			val merkle = work.data.slice(64, 76)
-			require(merkle.length == 12)
-
-			val job2 = BFLFullRangeJob(work.midstate, merkle)
-			val job = BFLNonceJob(work.midstate, merkle, eninfo.extranonce1,
-				sjob.extranonce2)
-
-			//startJob(job)
-			midstateToJobMap += work.midstate -> sjob
-
-			queueJob(job2)(after)
-
-			log.debug("submitting work")
-		}
-	}
-
-	//NOTE: this will call the timer again
-	def getResults() = if(!overHeating) usbCommandInfo(miningInterface, "getResults") {
-		if(workSubmitted < maxWorkQueue) {
-			val n = maxWorkQueue - workSubmitted
-			0.until(n).foreach(_ => {
-				//workSubmitted += 1
-				self ! AddWork
-			})
-		}
-
-		flushRead(miningInterface)
-		sendDataCommand(miningInterface, QRES.getBytes)()
-		readLinesUntil(miningInterface, "OK") { lines =>
-			self ! MinerMetrics.DevicePoll
-
-			try {
-				val inProcess = lines(0).split(":")(1).toInt
-				val count = lines(1).split(":")(1).toInt
-
-				//if(inProcess > 0) log.info("inProcess " + inProcess)
-
-				workSubmitted -= count
-				workSubmitted = math.max(workSubmitted, 0)
-				//workSubmitted = inProcess
-
-				//require(lines(2 + count) == "OK")
-
-				val hashLines = 0.until(count).map(i => lines(2 + i))
-
-				hashLines foreach { hl =>
-					val parts = hl.split(",")
-
-					val midstate = parts(0).fromHex.toSeq
-					val blockData = parts(1).fromHex.toSeq
-					val nNonces = parts(2).toInt
-					val nonces = parts.slice(3, 3 + nNonces).map(_.fromHex).toSeq
-
-					nonces.foreach(self ! BFLWorkResult(midstate, blockData, _))
-				}
-			} catch {
-				case e: Throwable =>
-					//log.error(e, "failed parsing " + lines.toString)
-					log.debug("failed parsing " + lines.toString)
-					//flushWork()
-					flushRead(miningInterface)
-			}
-
-			maybeStartResultsTimer()
-		}
-		//flushRead(miningInterface)
-	}
-
-	def doInit() {
-		runIrps(initIrps) { _ =>
-			//flushRead(miningInterface)
-			identify()
-			getInfo {
-				//flushWork()
-				context become normal
+				log.debug("nResults " + n)
+			case ReceiveLine("OK") =>
+				finishedInit = true
 				unstashAll()
-				maybeStartResultsTimer()
-			}
-		}
+				context become normal
+				if(workSubmitted < maxWorkQueue) addWork()
+			case ReceiveLine(line) =>
+				val parts = line.split(",")
+
+				workSubmitted = math.max(workSubmitted - 1, 0)
+
+				val midstate = parts(0).fromHex.toSeq
+				val blockData = parts(1).fromHex.toSeq
+				val nNonces = parts(2).toInt
+				val nonces = parts.slice(3, 3 + nNonces).map(_.fromHex).toSeq
+
+				nonces.foreach(self ! BFLWorkResult(midstate, blockData, _))
+			case NonTerminated(_) => stash()
+		})
 	}
 
-	def setFan(max: Boolean) {
-		usbCommandInfo(miningInterface, "setFan") {
-			if(max) sendDataCommand(miningInterface, FAN4.getBytes)()
-			else sendDataCommand(miningInterface, FANAUTO.getBytes)()
-			readLine(miningInterface) { line =>
-				log.info("fan resp " + line)
-				true
+	def normalBaseReceive: Receive = responseReceive orElse metricsReceive orElse workReceive orElse {
+		case ReceiveLine(line) if line.startsWith("Temp") =>
+			try {
+				val ts = line.split(",").map(x => x.split(":")(1).trim)
+
+				temp1 += ts(0).toInt * 0.63
+				temp1 /= 1.63
+				temp2 += ts(1).toInt * 0.63
+				temp2 /= 1.63
+			} catch {
+				case x: Throwable =>
+					//log.error(x, "failed parsing temp " + lines1)
+					log.info("failed parsing temp " + line)
 			}
-		}
+
+			if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
+				overHeating = true
+				log.warning("Overheating! Pausing work")
+				//TODO: add fan
+				//setFan(true)
+				flushWork()
+			}
+
+			if(overHeating && (curMaxTemp + TEMP_RECOVER) < TEMP_OVERHEAT) {
+				log.warning("Cooled down. Resuming work")
+				overHeating = false
+				//setFan(false)
+			}
+
+			log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
+
+			true
+		case ReceiveLine(line) if line.startsWith("OK:FLUSHED") =>
+			val flushed = line.split(" ")(1).toInt
+
+			log.info("Flushed " + flushed)
+			workSubmitted = math.max(workSubmitted - flushed, 0)
+		case BFLWorkResult(midstate, blockData, nonce0) =>
+			val nonce = nonce0.reverse
+			val jobOpt = midstateToJobMap.get(midstate)
+
+			if (!jobOpt.isDefined) {
+				log.warning("Cannot find job for midstate")
+				self ! MinerMetrics.NonceFail
+			} else {
+				self ! Nonce(jobOpt.get.work, nonce, jobOpt.get.extranonce2)
+			}
+		case ReceiveLine(INVALID) =>
+			log.warning("Failed submit!")
+			workSubmitted = math.max(workSubmitted - 1, 0)
 	}
 
-	def checkTemp() {
-		flushRead(miningInterface)
-		usbCommandInfo(miningInterface, "checkTemp") {
-			sendDataCommand(miningInterface, TEMPERATURE.getBytes)()
-			readLine(miningInterface) { lines1 =>
-				try {
-					val ts = lines1.split(",").map(x => x.split(":")(1).trim)
-
-					temp1 += ts(0).toInt * 0.63
-					temp1 /= 1.63
-					temp2 += ts(1).toInt * 0.63
-					temp2 /= 1.63
-				} catch {
-					case x: Throwable =>
-						//log.error(x, "failed parsing temp " + lines1)
-						log.info("failed parsing temp " + lines1)
-				}
-
-				if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
-					overHeating = true
-					log.warning("Overheating! Pausing work")
-					setFan(true)
-					flushWork()
-				}
-
-				if(overHeating && (curMaxTemp + TEMP_RECOVER) < TEMP_OVERHEAT) {
-					log.warning("Cooled down. Resuming work")
-					overHeating = false
-					setFan(false)
-				}
-
-				log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
-
-				true
-			}
-		}
-	}
-
-	def normal: Receive = usbBaseReceive orElse metricsReceive orElse workReceive orElse {
+	def normal: Receive = normalBaseReceive orElse {
 		case AbstractMiner.CancelWork =>
-			//flush old work here
-			if(workSubmitted > 0) flushWork()
-		case GetResults =>
-			resultTimer = None
-			getResults
-		case CheckTemp => checkTemp()
+			flushWork()
+			addWork()
+		case GetResults => getResults()
+		case ReceiveLine(line) =>
+			log.warning("Unhandled line " + line)
 		case ExpireJobs(set) =>
+			getTemp()
 			if(!set.isEmpty) {
 				val preSize = midstateToJobMap.size
 				midstateToJobMap --= set
@@ -356,58 +223,162 @@ class BFLSC(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorR
 
 				ExpireJobs(expired.keySet)
 			} pipeTo self
-		case AddWork => addWork()
-		case BFLWorkResult(midstate, blockData, nonce0) =>
-			val nonce = nonce0.reverse
-			val jobOpt = midstateToJobMap.get(midstate)
-
-			if (!jobOpt.isDefined) {
-				log.warning("Cannot find job for midstate")
-				self ! MinerMetrics.NonceFail
-			} else {
-				self ! Nonce(jobOpt.get.work, nonce, jobOpt.get.extranonce2)
-			}
 	}
 
-	def receive: Receive = usbBaseReceive orElse {
-		case Start => doInit()
-		case _ => stash()
+	def postInit() {
+		unstashAll()
+		context become normal
+
+		addWork()
 	}
+
+	def init() = getDevice {
+		var lines = Vector.empty[String]
+		var gotIdentity = false
+
+		object PostIrp
+
+		val lastPurgeIrp = Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
+
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_LATENCY, latency.toMillis.toShort,
+			controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_BAS, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_BAS,
+			((INDEX_BAUD_BAS & 0xff00) | controlIndex).toShort).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
+		deviceRef ! lastPurgeIrp.send
+
+		context become (responseReceive orElse {
+			case GetResults =>
+			case Usb.ControlIrpResponse(`lastPurgeIrp`, _) =>
+				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp)
+				send(intf, IDENTIFY.getBytes)
+			case PostIrp =>
+				send(intf, DETAILS.getBytes)
+
+				startRead()
+			case ReceiveLine(line) if !gotIdentity =>
+				gotIdentity = true
+				log.info("Identity " + line)
+			case ReceiveLine("OK") =>
+				log.info(lines.toString)
+				bflInfo = Some(BFLInfo(lines))
+				log.info("details " + bflInfo.get.toString)
+
+				val (scanTime0, workTime0, latency0) = if(bflInfo.get.nEngines < 34) { //JAL
+					(BAJ_SCAN_TIME, BAJ_WORK_TIME, BAJ_LATENCY)
+				} else if(bflInfo.get.nEngines < 130) { //little single
+					(BAL_SCAN_TIME, BAL_WORK_TIME, BAL_LATENCY)
+				} else (BAS_SCAN_TIME, BAS_WORK_TIME, BAS_LATENCY)
+
+				latency = latency0
+
+				deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_LATENCY,
+					latency.toMillis.toShort, controlIndex).send
+
+				postInit()
+			case ReceiveLine(line) =>
+				lines :+= line
+			case NonTerminated(_) => stash()
+		})
+	}
+
+	def addWork() = if(workSubmitted < maxWorkQueue && !overHeating) {
+		val workOpt = getWork(true)
+
+		if(workOpt.isDefined) {
+			workSubmitted += 1
+
+			val sjob = workOpt.get
+			val work = sjob.work
+			val eninfo = extraNonceInfo.get
+
+			val merkle = work.data.slice(64, 76)
+			require(merkle.length == 12)
+
+			val job2 = BFLFullRangeJob(work.midstate, merkle)
+			val job = BFLNonceJob(work.midstate, merkle, eninfo.extranonce1,
+				sjob.extranonce2)
+
+			//startJob(job)
+			midstateToJobMap += work.midstate -> sjob
+
+			submitWork(job2)
+
+			log.debug("submitting work to device")
+		} else log.info("No work to add yet!")
+	}
+
+	//2 phase... lift to different behavior
+	def submitWork(job: BFLFullRangeJob) {
+		var phase = 0
+
+		object StartPhase1
+		object SubmitTimeout
+
+		context.system.scheduler.scheduleOnce(20.millis, self, StartPhase1)
+		val timeout = context.system.scheduler.scheduleOnce(1.5.seconds, self, SubmitTimeout)
+
+		def finish() {
+			timeout.cancel()
+			context become normal
+			unstashAll()
+		}
+
+		context become (normalBaseReceive orElse {
+			case SubmitTimeout =>
+				log.warning("submitWork timeout!")
+				finish()
+			case StartPhase1 =>
+				send(intf, QJOB.getBytes)
+				phase = 1
+			case ReceiveLine("OK") if phase == 1 =>
+				send(intf, job.payload)
+				phase = 2
+			case ReceiveLine(line) if phase == 1 =>
+				log.warning("submitWork failed with " + line)
+				finish()
+			case ReceiveLine(OKQ) if phase == 2 =>
+				self ! MinerMetrics.WorkStarted
+				log.debug("submitWork finished")
+				finish()
+			case ReceiveLine(line) if phase == 2 =>
+				log.warning("submitWork failed with " + line)
+				finish()
+			case NonTerminated(_) => stash()
+		})
+	}
+
+	def startRead() = bufferRead(intf)
 
 	override def preStart() {
 		super.preStart()
 
-		context.system.scheduler.schedule(1.seconds, 3.seconds, self, CalcStats)
-		context.system.scheduler.schedule(1.seconds, 1.seconds, self, CheckTemp)
-		context.system.scheduler.schedule(
-			1.seconds, 45.seconds, self, JobTimeouts)
+		init()
 
 		stratumSubscribe(stratumRef)
-
-		self ! Start
 	}
 
 	override def postStop() {
-		super.postStop()
-
-		context stop self
+		pollTimer.cancel()
+		jobTimeoutTimer.cancel()
 	}
-
-
-
 }
 
 case object BFLSC extends USBDeviceDriver {
 	sealed trait BFLSCCommand
+	sealed trait BFLSCNonCriticalCommand extends BFLSCCommand
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
 
 	case object Start extends BFLSCCommand
-	case object CalcStats extends BFLSCCommand
-	case object GetResults extends BFLSCCommand
-	case object AddWork extends BFLSCCommand
+	case object GetResults extends BFLSCNonCriticalCommand
+	case object AddWork extends BFLSCNonCriticalCommand
 	case object JobTimeouts extends BFLSCCommand
-	case object CheckTemp extends BFLSCCommand
+	case object CheckTemp extends BFLSCNonCriticalCommand
 	case class ExpireJobs(set: Set[Seq[Byte]]) extends BFLSCCommand
 
 	val bflTimeout = 100.millis
@@ -465,6 +436,7 @@ case object BFLSC extends USBDeviceDriver {
 				n -> BFLProc(ne, parts(1).trim)
 			}
 
+			//for some reason, i used to get "DEVICE:"...
 			BFLInfo(pairs("device"), pairs("firmware"), pairs("minig speed"),
 				pairs("engines").toInt, pairs("frequency"),
 				pairs("xlink mode"), pairs("critical temperature").toInt,
@@ -493,7 +465,7 @@ case object BFLSC extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice,
+		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BAS)
 	}
@@ -514,7 +486,7 @@ case object BFLSC extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice,
+		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BFL)
 	}
@@ -603,7 +575,7 @@ case object BFLSC extends USBDeviceDriver {
 		val INVALID = ANERR + "INVALID DATA"
 		val ERRSIG = ANERR + "SIGNATURE"
 		val OKQ = "OK:QUEUED"
-		val INPROCESS = "INPROCESS"
+		val INPROCESS = "INPROCESS:"
 		// = Followed = by = N=1..5
 		val OKQN = "OK:QUEUED "
 		val QFULL = "QUEUE FULL"
@@ -643,17 +615,17 @@ case object BFLSC extends USBDeviceDriver {
 		// = Defaults = (slightly = over = half = the = work = time) = but = ensure = none = are = above = 100
 		// = SCAN_TIME = - = delay = after = sending = work
 		// = RES_TIME = - = delay = between = checking = for = results
-		val BAM_SCAN_TIME = 20
-		val BAS_SCAN_TIME = 360
-		val BAL_SCAN_TIME = 720
-		val BAJ_SCAN_TIME = 1000
-		val RES_TIME = 100
+		val BAM_SCAN_TIME = 20.millis
+		val BAS_SCAN_TIME = 360.millis
+		val BAL_SCAN_TIME = 720.millis
+		val BAJ_SCAN_TIME = 1000.millis
+		val RES_TIME = 100.millis
 		val MAX_SLEEP = 2000
 
 		val BAJ_LATENCY = 32.millis
 		//LATENCY_STD
-		val BAL_LATENCY = 12
-		val BAS_LATENCY = 12.toShort
+		val BAL_LATENCY = 12.millis
+		val BAS_LATENCY = 12.millis
 		// = For = now = a = BAM = doesn't = really = exist = - = it's = currently = 8 = independent = BASs
 		val BAM_LATENCY = 2
 
@@ -684,4 +656,3 @@ case object BFLSC extends USBDeviceDriver {
 		val REINIT_TIME_MAX = 3000000
 	}
 }
-*/

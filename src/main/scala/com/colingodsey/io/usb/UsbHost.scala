@@ -1,4 +1,17 @@
-package com.colingodsey.usb
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
+package com.colingodsey.io.usb
 
 import org.usb4java._
 import akka.actor._
@@ -8,6 +21,7 @@ import scala.concurrent.duration._
 import scala.concurrent.blocking
 import com.colingodsey.scalaminer.utils._
 import scala.collection.JavaConversions._
+import akka.actor.SupervisorStrategy._
 
 object UsbHost {
 	sealed trait Command
@@ -15,25 +29,33 @@ object UsbHost {
 	case object UpdateDeviceList extends Command
 
 	private[usb] class LibUsbSelector(usbContext: Context) extends Actor with ActorLogging {
-
 		implicit def ec = context.system.dispatcher
 		case object Poll
 
 		val pollTimeout = 1.second
-		val pollFreq = 2.millis
+		val pollFreq = 0.millis//2.millis
 
 		def startPollTimer() {
-			context.system.scheduler.scheduleOnce(pollFreq, self, Poll)
+			if(pollTimeout > 0.seconds)
+				context.system.scheduler.scheduleOnce(pollFreq, self, Poll)
+			else self ! Poll
+			//log.info("Starting poll timer")
 		}
 
 		def receive = {
 			case Poll => blocking {
-				LibUsb.lockEvents(usbContext)
+				//LibUsb.lockEvents(usbContext)
 
-				LibUsb.handleEventsTimeout(usbContext, pollTimeout.toMicros)
+				try {
+					val st = LibUsb.handleEventsTimeout(usbContext, pollTimeout.toMicros)
 
-				LibUsb.unlockEvents(usbContext)
+					if(st != 0)
+						throw new LibUsbException("handleEventsTimeout error", st)
+				} catch { case x: Throwable =>
+					log.error(x, "Uncaught selector error!")
+				}
 
+				//LibUsb.unlockEvents(usbContext)
 				startPollTimer()
 			}
 		}
@@ -42,6 +64,8 @@ object UsbHost {
 			super.preStart()
 
 			startPollTimer()
+
+			log.info("Starting LibUsbSelector")
 		}
 	}
 }
@@ -80,6 +104,12 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 		}
 	}
 
+	override val supervisorStrategy =
+		OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 1.2.seconds) {
+			//case _: org.usb4java.LibUsbException    => Stop
+			case _: Exception                       => Stop
+		}
+
 	def descToDesc(descriptor: org.usb4java.DeviceDescriptor) =
 		DeviceDescriptor(descriptor.bcdUSB / 100.0,
 			descriptor.bDeviceClass,
@@ -108,8 +138,8 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 		case UnSubscribe =>
 			subscribers -= sender
 			context unwatch sender
-		case RefFor(deviceId) => deviceActors get deviceId match {
-			case Some(ref) => sender ! DeviceRef(deviceId, Some(ref))
+		case Connect(deviceId) => deviceActors get deviceId match {
+			case Some(ref) => sender ! Connected(deviceId, Some(ref))
 			case None =>
 				val list = new DeviceList
 				val result = LibUsb.getDeviceList(usbContext, list)
@@ -120,28 +150,45 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 				val found = list.filter(deviceToId(_) == deviceId).headOption
 
 				found match {
-					case None => sender ! DeviceRef(deviceId, None)
-					case Some(x) =>
-						//will be freed later when the actor dies
-						LibUsb.refDevice(x)
+					case None => sender ! Connected(deviceId, None)
+					case Some(device) =>
+						val handle: DeviceHandle = new DeviceHandle
 
-						val ref = context.actorOf(Props(classOf[UsbDevice],
-							x, deviceId), name = deviceId.idKey)
+						val r = LibUsb.open(device, handle)
 
-						context watch ref
+						if(r != LibUsb.SUCCESS) {
+							log.error(new LibUsbException("Unable to open handle", r),
+								"Failed to open device handle")
+							Connected(deviceId, None)
+						} else {
+							val ref = context.actorOf(Props(classOf[UsbDevice],
+								handle, deviceId), name = deviceId.idKey)
 
-						deviceActors += deviceId -> ref
+							log.info(s"Starting $ref for dev $deviceId")
 
-						sender ! DeviceRef(deviceId, Some(ref))
+							context watch ref
+
+							deviceActors += deviceId -> ref
+
+							sender ! Connected(deviceId, Some(ref))
+						}
 				}
 
 				LibUsb.freeDeviceList(list, true)
 		}
+		case Terminated(ref) if hasDeviceRef(ref) =>
+			log.info("Device ref closed: " + ref)
+			val filtered = deviceActors.filter(_._2 != ref)
+
+			//val removed = deviceActors.toSet -- filtered.toSet
+			//for(rem <- removed) deviceSet -= rem._1
+
+			deviceActors = filtered
+			subscribers -= ref
+
+			self ! UpdateDeviceList
 		case Terminated(ref) if subscribers(ref) =>
 			subscribers -= ref
-		case Terminated(ref) if hasDeviceRef(ref) =>
-			log.info("Actor ref closed: " + ref)
-			deviceActors = deviceActors.filter(_._2 != ref)
 		case UpdateDeviceList =>
 			val list = new DeviceList
 			val result = LibUsb.getDeviceList(usbContext, list)
@@ -151,14 +198,20 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 
 			val oldDevices = deviceSet
 
-			deviceSet ++= list.map(deviceToId).toSet
+			deviceSet = list.map(deviceToId).toSet
 
 			val removedDevices = oldDevices -- deviceSet
 			val addedDevices = deviceSet -- oldDevices
 
+			if(!removedDevices.isEmpty)
+				log.info("Removing devices " + removedDevices)
+
+			if(!addedDevices.isEmpty)
+				log.info("Adding devices " + addedDevices)
+
 			for(id <- removedDevices) {
 				if(deviceActors contains id) {
-					log.info("Stopping active device actor")
+					log.info("Stopping active device actor " + deviceActors(id))
 					context stop deviceActors(id)
 				}
 			}
@@ -207,6 +260,8 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 		//create pinned selector
 		context watch context.actorOf(Props(classOf[LibUsbSelector],
 			usbContext).withDispatcher(pinnedDispatcher), name = "selector")
+
+		log.info("Starting UsbHost")
 	}
 
 	override def postStop() {

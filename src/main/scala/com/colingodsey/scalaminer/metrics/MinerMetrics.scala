@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.metrics
 
 import akka.actor.{ActorLogging, Terminated, ActorRef, Actor}
@@ -111,7 +124,7 @@ class MetricsActor extends Actor with ActorLogging {
 
 			metricMap += sender -> block.updateCounter(x)(
 				_.add(1).forTimeFrame(timeFrame))
-		case Terminated(ref) =>
+		case Terminated(ref) if watching(ref) =>
 			watching -= ref
 			metricMap -= ref
 	}

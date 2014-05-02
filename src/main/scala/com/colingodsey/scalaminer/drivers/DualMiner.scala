@@ -1,61 +1,89 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.drivers
 
 import javax.usb._
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
-import javax.usb.event._
-import akka.pattern._
-import spray.json._
-import java.io.{ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer._
-import javax.xml.bind.DatatypeConverter
-import akka.util.{Timeout, ByteString}
-import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.network.Stratum.{Job, MiningJob}
-import com.colingodsey.scalaminer.hashing.Hashing
-import com.colingodsey.scalaminer.hashing.Hashing._
-import com.colingodsey.scalaminer.Nonce
-import scala.Some
-import com.colingodsey.scalaminer.Work
 import com.colingodsey.scalaminer.utils._
-import spray.json.DefaultJsonProtocol._
-import com.lambdaworks.crypto.SCrypt
-import com.colingodsey.usb.Usb
-import akka.io.IO
+import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.metrics.MinerMetrics
-import com.colingodsey.usb.Usb.DeviceId
-import com.colingodsey.scalaminer.ScalaMiner.HashType
+
+class DualMinerScrypt(val deviceId: Usb.DeviceId,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends DualMinerFacet {
+	def hashType = ScalaMiner.Scrypt
+
+	def cts = false //dual mode
+
+	def receive = {
+		case _ => stash()
+	}
+
+	override def preStart() {
+		super.preStart()
+
+		//getDevice(requestGolden())
+		getDevice {
+			goldNonceReceived = true
+
+			postInit()
+		}
+	}
+}
+
+class DualMinerSHA256(val deviceId: Usb.DeviceId,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends DualMinerFacet {
+	def hashType = ScalaMiner.SHA256
+
+	def cts = false //dual mode
+
+	finishedInit = true
+
+	def receive = nonceReceive orElse {
+		case Usb.BulkTransferResponse(_, _, `goldNonceRespId`) =>
+			log.info("Gold nonce request sent")
+
+			bufferRead(nonceInterface)
+		case _ => stash()
+	}
+
+	override def preStart() {
+		super.preStart()
+
+		getDevice(requestGolden())
+	}
+}
 
 class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashType, ActorRef])
 		extends DualMinerFacet {
 	import FTDI._
 	import DualMiner._
 
-	def readDelay = 5.millis
-
-	override def readSize = 512 // ?
-
 	def hashType = ScalaMiner.Scrypt
-
-	def isFTDI = true
-
-	def identity = DualMiner.DM
 
 	val ctsIrp = Usb.ControlIrp(TYPE_IN, SIO_POLL_MODEM_STATUS_REQUEST, 0, 1)
 	val lowDtrIrp = Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_LOW, 0)
+	val highDtrIrp = Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_HIGH, 0)
 
 	var cts = false //true for LTC(T) only side of switch
-	var finishedInit = false
 
-	lazy val interfaceA = identity.interfaces.filter(_.interface == 0).head
-	lazy val interfaceB = identity.interfaces.filter(_.interface == 1).head
+	case object LowDtrPostDelay
 
-	def isDualIface = !cts
-
-	def nonceInterface = if(isScrypt && isDualIface) interfaceB
-	else interfaceA
 
 	def initIrpsPre() {
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_BAUD, 0xC068.toShort, 0x201).send
@@ -71,14 +99,17 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_A).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, INTERFACE_A).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_HIGH, 0).send
-		//TODO: do we need the extra delay here (noted in cgminer)?
-		deviceRef ! lowDtrIrp.send
+		deviceRef ! highDtrIrp.send
 	}
 
 	//TODO: init timeout
-	def initReceive: Receive = {
+	def initReceive: Receive = metricsReceive orElse nonceReceive orElse {
+
+		case Usb.ControlIrpResponse(`highDtrIrp`, _) =>
+			context.system.scheduler.scheduleOnce(2.millis, deviceRef, lowDtrIrp.send)
 		case Usb.ControlIrpResponse(`ctsIrp`, Right(data)) if data.length >= 2 =>
+			log.info("Received ctsIrp " + data.toHex)
+			//etiher 18,96 for dual, or 2,96 for ltc. 0x000x0002,96
 			def status = (data(1) << 8) | (data(0) & 0xFF)
 			def st = (status & 0x10) == 0
 			cts = st //also sets isDualIface
@@ -86,7 +117,10 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 
 			postCTSInit()
 		case Usb.ControlIrpResponse(`lowDtrIrp`, _) =>
-			val runCommand = if( /*data.length == 2 && */ /*!st*/ isDualIface) {
+			context.system.scheduler.scheduleOnce(2.millis, self, LowDtrPostDelay)
+		case LowDtrPostDelay =>
+			log.info("Received lowDtrIrp")
+			val runCommand = if(isDualIface) {
 				log.info("Setting 550M") //BTC / LTC
 				Constants.pll_freq_550M_cmd
 			} else {
@@ -94,37 +128,60 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 				Constants.pll_freq_850M_cmd
 			}
 
-			send(interfaceA, runCommand: _*)
 			if(isDualIface) {
 				send(interfaceA, Constants.btc_gating: _*)
 				send(interfaceA, Constants.btc_init: _*)
 				send(interfaceB, Constants.ltc_init: _*)
 				send(interfaceA, Constants.btc_open_nonce_unit: _*)
-			} else
+			} else {
 				send(interfaceA, Constants.ltc_only_init: _*)
+			}
 
-			finishedInit = true
+			send(interfaceA, runCommand: _*)
 
-			context become normal
-			unstashAll()
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
+				SIO_SET_RTS_HIGH, 2.toByte).send
 
-			if(isDualIface) {
+			if(!isDualIface) {
+				requestGolden()
+			} else {
+				finishedInit = true
 
-			} else self ! StartWork
+				val scryptChild =  context.actorOf(Props(classOf[DualMinerScrypt], deviceId,
+					workRefs), name = "scrypt")
+				val shaChild = context watch context.actorOf(Props(classOf[DualMinerSHA256], deviceId,
+					workRefs), name = "sha256")
+
+				context watch scryptChild
+				context watch shaChild
+
+				metricSubscribers.foreach(x => scryptChild.tell(MinerMetrics.Subscribe, x))
+				metricSubscribers.foreach(x => shaChild.tell(MinerMetrics.Subscribe, x))
+
+				stratumUnSubscribe(stratumRef)
+				context become {
+					case x: UsbDeviceManager.FailedIdentify =>
+						context.parent ! x
+				}
+			}
+
+		case Usb.BulkTransferResponse(_, _, `goldNonceRespId`) =>
+			log.info("Gold nonce request sent")
+
+			startRead()
 		case x @ Usb.ControlIrpResponse(`ctsIrp`, _) =>
 			sys.error("Bad CTS IRP response " + x)
+		case x @ Usb.ControlIrpResponse =>
+			log.info("IRP Resp " + x)
 		case _ => stash()
 	}
 
 	def doInit() {
+		log.info("Starting init")
 		initIrpsPre()
 	}
 
-
-
-	def receive = {
-		case _ => stash()
-	}
+	def receive = initReceive
 
 	override def preStart() {
 		super.preStart()
@@ -140,212 +197,6 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 	}
 }
 
-/*
-class DualMinerSHA256(val device: UsbDevice,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef],
-		val cts: Boolean,
-		endpointsForIface0: Map[Usb.Interface, Map[Usb.Endpoint, UsbPipe]])
-		extends DualMinerFacet {
-	import FTDI._
-	import DualMiner._
-
-	def isDualIface0: Boolean = true
-	override def hashType: ScalaMiner.HashType = ScalaMiner.SHA256
-	def nonceInterface: Usb.Interface = interfaceA
-
-	override lazy val endpointsForIface = endpointsForIface0
-
-	def receive = normal
-
-	override def preStart() {
-		super.preStart()
-
-		self ! StartWork
-
-		//endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
-	}
-}
-
-class DualMinerScrypt(val device: UsbDevice,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef],
-		val cts: Boolean,
-		endpointsForIface0: Map[Usb.Interface, Map[Usb.Endpoint, UsbPipe]])
-		extends DualMinerFacet {
-	import FTDI._
-	import DualMiner._
-
-	def isDualIface0: Boolean = true
-	override def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
-	def nonceInterface: Usb.Interface = interfaceB
-
-	//override lazy val endpointsForIface = endpointsForIface0
-
-	def receive = normal
-
-	override def preStart() {
-		super.preStart()
-
-		self ! StartWork
-
-		//endpointsForIface(nonceInterface).foreach(_._2.addUsbPipeListener(pipeListener))
-	}
-}
-
-class DualMiner2(val device: Usb.DeviceId,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends Actor with ActorLogging {
-	def receive = {
-		case Usb.DeviceRef(`device`, Some(ref)) =>
-		case Usb.DeviceRef(`device`, None) =>
-		case x: Usb.DeviceRef =>
-	}
-
-	override def preStart() {
-		super.preStart()
-
-		IO(Usb) ! Usb.RefFor(device)
-	}
-}
-
-class DualMiner(val device: UsbDevice, val workRefs: Map[ScalaMiner.HashType, ActorRef])
-		extends DualMinerFacet {
-	import FTDI._
-	import DualMiner._
-
-	override def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
-
-	//TODO: this needs a config value... matches switch
-	def isDualIface0 = false //false(1) for LTC only, otherwise true(0)
-
-	var cts = false //true for LTC(T) side of switch
-
-	def miningInterface = if(isScrypt && isDualIface0) interfaceB else interfaceA
-	def nonceInterface = miningInterface
-
-	def dualInitIrps = if(isDualIface0) List(
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, 0xC068.toShort, 0x202),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_B),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, INTERFACE_B)
-	) else Nil
-
-	def initIrps = List(
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, 0xC068.toShort, 0x201)
-	) ::: dualInitIrps ::: List(
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_A),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, INTERFACE_A),
-		device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_HIGH, 0)
-	)
-
-	def initIrps2 = List(
-		device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_LOW, 0)
-	)
-
-	def getCTSSetFreq {
-		val ctsIrp = device.createUsbControlIrp(TYPE_IN,
-			SIO_POLL_MODEM_STATUS_REQUEST, 0, 1)
-
-		val buf = Array.fill[Byte](2)(0)
-		ctsIrp.setData(buf)
-
-		//etiher 18,96 for dual, or 2,96 for ltc. 0x000x0002,96
-		runIrps(List(ctsIrp)) { data =>
-			def status = (data(1) << 8) | (data(0) & 0xFF)
-			def st = (status & 0x10) == 0
-			cts = st
-			//println("cts", data.toList, buf.toList, st)
-
-			val runCommand = if( /*data.length == 2 && */ !st) {
-				log.info("Setting 550M") //BTC / LTC
-				Constants.pll_freq_550M_cmd
-			} else {
-				log.info("Setting 850M") //LTC only
-				Constants.pll_freq_850M_cmd
-			}
-
-			sendDataCommands(interfaceA, runCommand) {
-				if(isDualIface0)
-					sendDataCommands(interfaceA, Constants.btc_open_nonce_unit) {
-						detect(postInit)
-					}
-				else detect(postInit)
-			}
-		}
-	}
-
-	def receive = usbBaseReceive orElse {
-		case Start =>
-			runIrps(initIrps) { _ =>
-				sleep(2.millis) {
-					runIrps(initIrps2) { _ =>
-						sleep(2.millis) {
-							if(isDualIface0) {
-								sendDataCommands(interfaceA, Constants.btc_gating)()
-								sendDataCommands(interfaceA, Constants.btc_init)()
-								sendDataCommands(interfaceB, Constants.ltc_init)(getCTSSetFreq)
-							} else {
-								sendDataCommands(interfaceA,
-									Constants.ltc_only_init)(getCTSSetFreq)
-							}
-						}
-					}
-				}
-			}
-		case _ => stash()
-	}
-
-	def postInit() {
-		//become either the parent of 2 worker actors
-		if(isDualIface0) {
-			context watch context.actorOf(Props(classOf[DualMinerScrypt], device,
-				workRefs, cts, endpointsForIface), name = "scrypt")
-			context watch context.actorOf(Props(classOf[DualMinerSHA256], device,
-				workRefs, cts, endpointsForIface), name = "sha256")
-
-			openedPipes.foreach { x =>
-				x.removeUsbPipeListener(pipeListener)
-			}
-
-			stratumUnSubscribe(stratumRef)
-			context become {
-				case CalcStats =>
-				case x: USBManager.FailedIdentify =>
-					context.parent ! x
-			}
-		} else { //or become the only facet for one of 2 hash types
-			context become normal
-			unstashAll()
-			self ! StartWork
-		}
-	}
-
-	override def preStart() {
-		super.preStart()
-
-		self ! Start
-	}
-
-	override def postStop() {
-		try scala.concurrent.blocking {
-			device syncSubmit device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
-				SIO_SET_RTS_HIGH, 2.toByte)
-			device syncSubmit device.createUsbControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST,
-				SIO_SET_DTR_HIGH, 0)
-		} catch {
-			case x: Throwable => log.error(x, "postStop failure")
-		}
-
-		super.postStop()
-	}
-
-	/*
-	if (state)
-	usb_val = SIO_SET_DTR_LOW;
-else
-	usb_val = SIO_SET_DTR_HIGH;
-if (libusb_control_transfer(dualminer->usbdev->handle, FTDI_TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, usb_val, 0, NULL, 0, 200) < 0)
-	 */
-
-}
-*/
 case object DualMiner extends USBDeviceDriver {
 	import USBUtils._
 
@@ -359,7 +210,6 @@ case object DualMiner extends USBDeviceDriver {
 
 	case object Start extends Command
 	case object StartWork extends Command
-	case object CalcStats extends Command
 
 	trait ContextualCommand extends Command
 
@@ -367,7 +217,7 @@ case object DualMiner extends USBDeviceDriver {
 	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
 
 	case object DM extends USBIdentity {
-		import USBManager._
+		import UsbDeviceManager._
 
 		def drv = DualMiner
 		def idVendor = FTDI.vendor

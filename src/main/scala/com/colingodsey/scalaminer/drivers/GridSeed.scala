@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.drivers
 
 import javax.usb.{UsbDevice, UsbConst}
@@ -10,14 +23,16 @@ import com.colingodsey.scalaminer.network.Stratum
 import akka.util.ByteString
 import javax.usb.event.UsbPipeDataEvent
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
-/*
+import com.colingodsey.io.usb.{BufferedReader, Usb}
+import com.colingodsey.io.usb.Usb.DeviceId
+
 object GridSeedMiner {
 	sealed trait Command
 
 	case object Start extends Command
 }
 
-trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker {
+trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker with BufferedReader {
 	import GridSeedMiner._
 	import GridSeed.Constants._
 
@@ -53,11 +68,19 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 	var hasRead = false
 	var currentJob: Option[Stratum.Job] = None
 
-	def detect() {
-		usbCommandInfo(intf, "detect") {
-			sendDataCommand(intf, chipResetBytes)()
-			sendDataCommand(intf, detectBytes)()
-			readDataUntilLength(intf, READ_SIZE) { dat =>
+	def startRead() {
+		//log.info("start read")
+		bufferRead(intf)
+	}
+
+	def detecting: Receive = usbBufferReceive orElse {
+		case BufferedReader.BufferUpdated(`intf`) =>
+			val buf = interfaceReadBuffer(intf)
+
+			if(buf.length >= READ_SIZE) {
+				val dat = buf.take(READ_SIZE)
+				dropBuffer(intf, READ_SIZE)
+
 				if(dat.take(READ_SIZE - 4) != detectRespBytes) {
 					log.warning("Failed detect!")
 					failDetect()
@@ -67,34 +90,34 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 					log.info("Grid seed detected! Version " + bVersion.toHex)
 
-					sendDataCommand(intf, chipResetBytes)()
-					sleepInf(intf, 200.millis)
-					//flushRead(intf)
+					send(intf, chipResetBytes)
+
 					if(isDual) {
-						sendDataCommands(intf, dualInitBytes)()
-						sendDataCommands(intf, dualResetBytes)()
+						send(intf, dualInitBytes: _*)
+						send(intf, dualResetBytes: _*)
 					} else {
-						sendDataCommands(intf, singleInitBytes)()
-						sendDataCommands(intf, singleResetBytes)()
+						send(intf, singleInitBytes: _*)
+						send(intf, singleResetBytes: _*)
 					}
 
-					sendDataCommand(intf, frequencyCommands(selectedFreq))()
+					send(intf, frequencyCommands(selectedFreq))
 
 					if(!isDual && altVoltage && fwVersion == 0x01140113) {
-						// Put GPIOA pin 5 into general function, 50 MHz output.
 						readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
 							val i = getInts(dat)(0)
 
 							val value = (i & 0xff0fffff) | 0x00300000
 
-							writeRegister(GPIOA_BASE + CRL_OFFSET, value)()
+							writeRegister(GPIOA_BASE + CRL_OFFSET, value)
 
 							// Set GPIOA pin 5 high.
 							readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
 								val i2 = getInts(dat2)(0)
 								val value2 = i2 | 0x00000020
-								writeRegister(GPIOA_BASE + ODR_OFFSET, value2)(detected())
+								writeRegister(GPIOA_BASE + ODR_OFFSET, value2)
 							}
+
+							detected()
 						}
 					} else if(altVoltage) {
 						log.error("Cannot set alt voltage when in dual or " +
@@ -102,19 +125,22 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 						failDetect()
 					} else detected()
 				}
+
+				context become normal
 			}
-		}
+		case _ => stash()
 	}
 
-	override def onReadTimeout() {
-		log.error("Read data timeout!")
-		if(!hasRead) failDetect()
-		else context stop self
+	def detect() {
+		context become detecting
+		send(intf, chipResetBytes)
+		send(intf, detectBytes)
 	}
 
 	def detected() {
 		context become normal
 		unstashAll()
+		bufferRead(intf)
 	}
 
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
@@ -125,10 +151,21 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 		require(cmd.length == 16)
 
-		readDataUntilLength(intf, regSize)(recv)
+		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
+		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
+
+		context.become({
+			case Usb.BulkTransferResponse(`intf`, Right(dat), `rrId`) =>
+				unstashAll()
+				context.unbecome()
+				recv(dat)
+			case Usb.BulkTransferResponse(`intf`, _, `rrId`) =>
+				sys.error("Failed read register (unknown)!")
+			case _ => stash()
+		}, false)
 	}
 
-	def writeRegister(addr: Int, value: Int)(recv: => Unit) {
+	def writeRegister(addr: Int, value: Int) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
 		val cmd = "55aac002".fromHex ++ intToBytes(addr) ++
@@ -136,7 +173,8 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 		require(cmd.length == 16)
 
-		readDataUntilLength(intf, regSize)(x => recv)
+		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
+		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 	}
 
 	def sendWork() {
@@ -159,93 +197,44 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 
 			self ! MinerMetrics.WorkStarted
 
-			usbCommandInfo(intf, "sendWork") {
-				//flushRead(intf)
+			send(intf, singleResetBytes: _*)
+			send(intf, dat)
 
-				sendDataCommands(intf, singleResetBytes)()
-				sendDataCommand(intf, dat)()
-			}
-
-			startWorkRead()
+			startRead()
 		}
 	}
 
-	def startWorkRead(): Unit = if(!readStarted) usbCommandInfo(intf, "startWorkRead") {
-		readStarted = true
+	def normal: Receive = metricsReceive orElse usbBufferReceive orElse workReceive orElse {
+		case AbstractMiner.CancelWork => sendWork()
+		case BufferedReader.BufferUpdated(`intf`) =>
+			val buf = interfaceReadBuffer(intf)
+			if(buf.length > 0) log.debug("Buffer updated with len " + buf.length)
 
-		object TimedOut
+			if(buf.length >= READ_SIZE) {
+				dropBuffer(intf, READ_SIZE)
 
-		val eps = endpointsForIface(intf)
+				val packet = buf take READ_SIZE
 
-		val (ep, pipe) = eps.filter(_._1.isInput).head
+				if(packet(0) == 0x55.toByte ||
+						packet(1) == 0x20.toByte) {
+					val nonce = packet.slice(4, 8)
+					val iNonce = BigInt((0.toByte +: nonce).toArray)
+					val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
 
-		lazy val timeoutTime = context.system.scheduler.scheduleOnce(
-			nonceTimeout, self, TimedOut)
+					if(currentJob.isDefined) {
+						val job = currentJob.get
 
-		var buffer = ByteString.empty
-
-		def keepReading = {
-			//discard....
-			if(buffer.length >= READ_SIZE) buffer = buffer drop READ_SIZE
-
-			context.system.scheduler.scheduleOnce(nonceDelay) {
-				//NOTE: this will execute outside of actor context
-				//but the queue should still create seq exec for this context
-				pipe.asyncSubmit(defaultReadBuffer)
-			}
-			false
-		}
-
-		addUsbCommandToQueue(intf, ({ () =>
-			timeoutTime.isCancelled
-			pipe.asyncSubmit(defaultReadBuffer)
-		}, {
-			case AbstractMiner.CancelWork =>
-				timeoutTime.cancel()
-				readStarted = false
-				sendWork()
-				true
-			case TimedOut =>
-				//onReadTimeout()
-				self ! MinerMetrics.WorkTimeout
-				readStarted = false
-				sendWork()
-				true
-			case x: UsbPipeDataEvent if x.getUsbPipe == pipe =>
-				val dat = x.getData
-
-				self ! MinerMetrics.DevicePoll
-
-				buffer ++= dat
-
-				if(buffer.length >= READ_SIZE) {
-					if(buffer(0) == 0x55.toByte ||
-							buffer(1) == 0x20.toByte) {
-						val nonce = buffer.slice(4, 8) //.reverse
-						val iNonce = BigInt((0.toByte +: nonce).toArray)
-						val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
-
-						if(currentJob.isDefined) {
-							val job = currentJob.get
-
-							self ! Nonce(job.work, nonce, job.extranonce2)
-						}
-
-						hasRead = true
+						self ! Nonce(job.work, nonce, job.extranonce2)
 					}
 
-					buffer = buffer.drop(READ_SIZE)
+					sendWork()
+
+					hasRead = true
 				}
-
-				keepReading
-		}))
+			}
 	}
 
-	def normal: Receive = metricsReceive orElse usbBaseReceive orElse workReceive orElse {
-		case AbstractMiner.CancelWork => sendWork()
-	}
-
-	def receive: Receive = usbBaseReceive orElse {
+	def receive: Receive = {
 		case Start => doInit()
 		case _ => stash()
 	}
@@ -260,7 +249,7 @@ trait GridSeedMiner extends USBDeviceActor with AbstractMiner with MetricsWorker
 	}
 }
 
-class GridSeedFTDIMiner(val device: UsbDevice,
+class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
 	import FTDI._
 	import GridSeed._
@@ -268,41 +257,56 @@ class GridSeedFTDIMiner(val device: UsbDevice,
 
 	def identity: USBIdentity = GSD2
 	override def isFTDI = true
+	def hashType = ScalaMiner.Scrypt
+	def readDelay = 20.millis
+	def readSize = 512 // ?
 
 	def controlIndex = 0.toShort
 
-	val initIrps = List(
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_LATENCY, LATENCY, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_AVA, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_AVA,
-			((INDEX_BAUD_AVA & 0xff00) | controlIndex).toShort),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex),
-		device.createUsbControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex)
-	)
+	val lastFlow = Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex)
 
 	def doInit() {
-		runIrps(initIrps) { _ =>
-			detect()
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_LATENCY, LATENCY, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_AVA, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_AVA,
+			((INDEX_BAUD_AVA & 0xff00) | controlIndex).toShort).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
+		deviceRef ! lastFlow.send
+
+		context become {
+			case Usb.ControlIrpResponse(`lastFlow`, _) =>
+				detect()
+				unstashAll()
+			case _ => stash()
 		}
 	}
+
 }
 
-class GridSeedSGSMiner(val device: UsbDevice,
+class GridSeedSGSMiner(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
 	import FTDI._
 	import GridSeed._
 	import Constants._
 
 	def identity: USBIdentity = GSD
+	def hashType = ScalaMiner.Scrypt
+	def readDelay = 20.millis
+	def readSize = 512 // ?
+
 	override def isFTDI = false
 
 	def doInit() {
 		detect()
 	}
 }
+
+/*
+
+
 
 class GridSeedPL2303Miner(val device: UsbDevice) extends PL2303Device {
 	def receive = ??? //initReceive
@@ -328,7 +332,7 @@ trait PL2303Device extends USBDeviceActor {
 	lazy val interfaceDef = identity.interfaces.toSeq.sortBy(_.interface).head
 
 	//set data control
-	val ctrlIrp = device.createUsbControlIrp(
+	val ctrlIrp = deviceRef ! Usb.ControlIrp(
 		CTRL_OUT,
 		REQUEST_CTRL,
 		VALUE_CTRL,
@@ -336,7 +340,7 @@ trait PL2303Device extends USBDeviceActor {
 	)
 	ctrlIrp.setData(Array.empty)
 
-	val lineCtrlIrp = device.createUsbControlIrp(
+	val lineCtrlIrp = deviceRef ! Usb.ControlIrp(
 		CTRL_OUT,
 		REQUEST_LINE,
 		VALUE_LINE,
@@ -347,7 +351,7 @@ trait PL2303Device extends USBDeviceActor {
 		x.writeInt(VALUE_LINE1)
 	})
 
-	val vendorIrp = device.createUsbControlIrp(
+	val vendorIrp = deviceRef ! Usb.ControlIrp(
 		VENDOR_OUT,
 		REQUEST_VENDOR,
 		VALUE_VENDOR,
@@ -368,7 +372,7 @@ trait PL2303Device extends USBDeviceActor {
 
 	def initUART() = runIrps(initIrps)(_ => context become normal)
 
-}
+}*/
 
 case object GridSeed extends USBDeviceDriver {
 	sealed trait Command
@@ -398,7 +402,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice,
+		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[GridSeedSGSMiner], device, workRefs)
 	}
@@ -418,7 +422,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice,
+		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
@@ -437,7 +441,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: UsbDevice,
+		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[GridSeedFTDIMiner], device, workRefs)
 	}
@@ -457,7 +461,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
 		)))
 
-		def usbDeviceActorProps(device: UsbDevice,
+		def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			??? //Props(classOf[GSD3Device], device)
 	}
@@ -468,6 +472,8 @@ case object GridSeed extends USBDeviceDriver {
 }
 
 object GSConstants {
+	val rrId = "RR".hashCode()
+
 	val MINER_THREADS = 1
 	val LATENCY = 4.toShort
 
@@ -615,4 +621,4 @@ object GSConstants {
 
 		"55aaef000500e086"
 	).map(_.fromHex)
-}*/
+}

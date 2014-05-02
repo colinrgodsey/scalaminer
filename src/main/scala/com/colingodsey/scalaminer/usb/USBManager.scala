@@ -1,3 +1,16 @@
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
 package com.colingodsey.scalaminer.usb
 
 import javax.usb.{UsbHostManager, UsbHub, UsbDevice, UsbConst}
@@ -10,9 +23,10 @@ import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
 import com.colingodsey.scalaminer.metrics.MinerMetrics
 import com.typesafe.config.Config
-import com.colingodsey.usb.Usb
+import com.colingodsey.io.usb.Usb
 import akka.util.Timeout
 import akka.io.IO
+import akka.actor.SupervisorStrategy.Stop
 
 
 object USBUtils {
@@ -58,7 +72,7 @@ trait USBIdentity extends MinerIdentity {
 	}
 }
 
-object USBManager {
+object UsbDeviceManager {
 	sealed trait Command
 
 	case class AddDriver(driver: USBDeviceDriver) extends Command
@@ -70,12 +84,14 @@ object USBManager {
 
 	case object ScanDevices extends Command
 
+	case object Start extends Command
+
 	case class RemoveRef(ref: ActorRef) extends Command
 }
 
-class IOUsbDeviceManager(config: Config)
+class UsbDeviceManager(config: Config)
 		extends Actor with ActorLogging with Stash {
-	import USBManager._
+	import UsbDeviceManager._
 
 	implicit def to = Timeout(2.seconds)
 	implicit def system = context.system
@@ -94,8 +110,14 @@ class IOUsbDeviceManager(config: Config)
 	val identityResetTimer = context.system.scheduler.schedule(
 		1.minute, config getDur "identity-reset-time", self, IdentityReset)
 
-	case class DeviceRefForIdentity(id: Usb.DeviceId, ref: ActorRef, identity: USBIdentity)
+	case class CreateDeviceIdentity(id: Usb.DeviceId, identity: USBIdentity)
 	case object PollDevices
+
+	override val supervisorStrategy =
+		OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 1.2.seconds) {
+			//case _: org.usb4java.LibUsbException    => Stop
+			case _: Exception                       => Stop
+		}
 
 	def maybePoll(): Unit = if(!pollQueued) {
 		pollQueued = true
@@ -103,11 +125,43 @@ class IOUsbDeviceManager(config: Config)
 	}
 
 	def receive = {
+		case Start =>
+			context watch libUsbHost
+
+			libUsbHost ! Usb.Subscribe
+		case MinerMetrics.Subscribe =>
+			metricsSubs += sender
+			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
+		case MinerMetrics.UnSubscribe =>
+			metricsSubs -= sender
+			workerMap.foreach(_._2.tell(MinerMetrics.UnSubscribe, sender))
+		case IdentityReset => failedIdentityMap = Map.empty
+		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
+		case AddDriver(drv) => usbDrivers += drv
+		case FailedIdentify(ref, identity) =>
+			workerMap.filter(_._2 == ref).map(_._1).headOption.foreach { dev =>
+				val s = failedIdentityMap.getOrElse(dev, Set.empty)
+				failedIdentityMap += dev -> (s + identity)
+			}
+
+		case Terminated(x) =>
+			context.system.scheduler.scheduleOnce(500.millis, self, RemoveRef(x))
+		case RemoveRef(x) =>
+			val filtered = workerMap.filter(_._2 == x).keySet
+
+			workerMap --= filtered
+
+			log.warning(s"$x died! Removing ${filtered.size} devices.")
+
+			self ! PollDevices
+
 		//got an identity and a device ref
-		case DeviceRefForIdentity(id, deviceRef, identity) if !workerMap.contains(id) =>
+		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
 			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
-			val name = identity.name + "." + id.idKey
+			val name = identity.name + "." + id.portId
 			val ref = context.actorOf(props, name = name)
+
+			log.info(s"Starting $ref for dev $id")
 
 			context watch ref
 
@@ -117,7 +171,15 @@ class IOUsbDeviceManager(config: Config)
 		case Usb.DeviceConnected(id) =>
 			devices += id
 
+			log.debug("Device connected " + id)
+
 			self ! PollDevices
+		case Usb.DeviceDisconnected(id) =>
+			devices -= id
+
+			log.debug("Device disconnected " + id)
+
+			workerMap.get(id) foreach context.stop
 		case PollDevices =>
 			pollQueued = false
 
@@ -136,134 +198,11 @@ class IOUsbDeviceManager(config: Config)
 			if(!matches.isEmpty) {
 				val (id, identity) = matches.head
 
-				val refFut = (libUsbHost ? Usb.RefFor(id)).map {
-					case Usb.DeviceRef(`id`, Some(deviceRef)) =>
-						DeviceRefForIdentity(id, deviceRef, identity)
-					case Usb.DeviceRef(`id`, None) =>
-						sys.error("Failed to get device ref! Not found.")
-					case x => sys.error("Unknown refFor response " + x)
-				}.recover {
-					case x: Throwable =>
-						log.error(x, "Failed to start device")
-						()
-				}
-
-				refFut pipeTo self
+				self ! CreateDeviceIdentity(id, identity)
 			}
-		case Usb.DeviceDisconnected(id) =>
-			devices -= id
-
-			workerMap.get(id) foreach context.stop
 	}
 
 	override def preStart() {
 		super.preStart()
-
-		context watch libUsbHost
-
-		libUsbHost ! Usb.Subscribe
 	}
 }
-/*
-class USBManagerJavax(config: Config) extends Actor with ActorLogging with Stash {
-	import USBManager._
-
-	implicit def ec = context.dispatcher
-
-    var usbDrivers: Set[USBDeviceDriver] = Set.empty
-	var workerMap: Map[UsbDevice, ActorRef] = Map.empty
-	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
-	var failedIdentityMap: Map[UsbDevice, Set[USBIdentity]] = Map.empty
-	var metricsSubs = Set[ActorRef]()
-
-	val scanTimer = context.system.scheduler.schedule(
-		1.seconds, config getDur "poll-time", self, ScanDevices)
-	val identityResetTimer = context.system.scheduler.schedule(
-		1.minute, config getDur "identity-reset-time", self, IdentityReset)
-
-	def rootHub = UsbHostManager.getUsbServices.getRootUsbHub
-
-	def scanDevices() = blocking {
-		val devices = getDevices(rootHub)
-
-		val matches = (for {
-			device <- devices
-			failedSet = failedIdentityMap.getOrElse(device, Set.empty)
-			if !workerMap.contains(device)
-			driver <- usbDrivers
-			identity <- driver.identities
-			if !failedSet(identity)
-			if identity matches device
-			if stratumEndpoints contains driver.hashType
-		} yield device -> identity).toSeq.toMap
-
-		val refs = matches map { m =>
-			val (device, identity) = m
-
-			val props = identity.usbDeviceActorProps(device, stratumEndpoints)
-			val name = identity.name + "." + device.hashCode()
-			val ref = context.actorOf(props, name = name)
-
-			context watch ref
-
-			metricsSubs.foreach(ref.tell(MinerMetrics.Subscribe, _))
-
-			device -> ref
-		}
-
-		workerMap ++= refs
-	}
-  
-	def getDevices(hub: UsbHub): Stream[UsbDevice] = blocking {
-		hub.getAttachedUsbDevices.toStream flatMap {
-			case x: UsbHub if x.isUsbHub => getDevices(x)
-			case x: UsbDevice => Some(x)
-			case _ => None
-		}
-	}
-
-	def findDevice(hub: UsbHub, vendorId: Short, productId: Short): Option[UsbDevice] =
-		getDevices(hub).filter { device =>
-			val desc = device.getUsbDeviceDescriptor
-			desc.idVendor == vendorId && desc.idProduct == productId
-		}.headOption
-
-
-	def manualScan = UsbHostManager.getUsbServices match {
-		case x: org.usb4java.javax.Services => x.scan()
-		case _ => sys.error("No manual scan for javax-usb driver")
-	}
-
-	def receive = {
-		case MinerMetrics.Subscribe =>
-			metricsSubs += sender
-			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
-		case MinerMetrics.UnSubscribe =>
-			metricsSubs -= sender
-			workerMap.foreach(_._2.tell(MinerMetrics.UnSubscribe, sender))
-		case IdentityReset => failedIdentityMap = Map.empty
-		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
-		case AddDriver(drv) => usbDrivers += drv
-		case ScanDevices => scanDevices()
-		case FailedIdentify(ref, identity) =>
-			workerMap.filter(_._2 == ref).map(_._1).headOption.foreach { dev =>
-				val s = failedIdentityMap.getOrElse(dev, Set.empty)
-				failedIdentityMap += dev -> (s + identity)
-			}
-
-		case Terminated(x) =>
-			context.system.scheduler.scheduleOnce(2.seconds, self, RemoveRef(x))
-		case RemoveRef(x) =>
-			val filtered = workerMap.filter(_._2 == x).keySet
-
-			workerMap --= filtered
-
-			log.warning(s"$x died! Removing ${filtered.size} devices.")
-	}
-
-	override def postStop() {
-		super.postStop()
-		scanTimer.cancel()
-		identityResetTimer.cancel()
-	}
-}*/

@@ -8,11 +8,10 @@ import AssemblyKeys._
 object ProjectBuild extends Build {
 	val Organization = "com.colingodsey"
 	val Version = "3.7.1"
-	val ScalaVersion = "2.10.3"
+	val ScalaVersion = "2.10.4"
 	val PlatformVersion = "0.4"
 
 	object Dependencies {
-
 		object V {
 			val Casbah = "2.4.1"
 			val Commons = "2.4"
@@ -20,8 +19,6 @@ object ProjectBuild extends Build {
 			val Akka = "2.2.1"
 			val SLF4J = "1.6.4"
 			val Spray = "1.2.0"
-			//val ZooKeeper = "3.4.5"
-			//val Spray = "1.2-20130710"
 		}
 
 		val deps = Seq(
@@ -36,8 +33,6 @@ object ProjectBuild extends Build {
 			"org.scalatest" % "scalatest_2.10" % "1.9" % "test",
 			"junit" % "junit" % "4.10" % "test",
 			"org.scalacheck" % "scalacheck_2.10" % "1.10.1" % "test",
-
-			//"io.netty"			 	% "netty"		 				% "3.6.6.Final" withSources(),
 
 			"uk.org.lidalia" % "sysout-over-slf4j" % "1.0.2",
 
@@ -106,9 +101,10 @@ object ProjectBuild extends Build {
 		// compile options
 		scalacOptions ++= Seq("-encoding", "UTF-8", "-deprecation",
 			"-unchecked", //"-optimise",
-			"-Xlog-free-terms", //"-feature",
+			"-Xlog-free-terms" //"-feature",
 			//"-Ymacro-debug-lite",
-			"-target:jvm-1.7"), //, "-Dscalac.patmat.analysisBudget=off"),
+			//"-target:jvm-1.7"
+		), //, "-Dscalac.patmat.analysisBudget=off"),
 		javacOptions ++= Seq("-Xlint:unchecked", "-Xlint:deprecation"))
 }
 

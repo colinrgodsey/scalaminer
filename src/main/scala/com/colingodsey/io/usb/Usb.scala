@@ -1,4 +1,17 @@
-package com.colingodsey.usb
+/*
+ * scalaminer
+ * ----------
+ * https://github.com/colinrgodsey/scalaminer
+ *
+ * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 3 of the License, or (at your option)
+ * any later version.  See COPYING for more details.
+ */
+
+package com.colingodsey.io.usb
 
 import akka.actor._
 import com.colingodsey.scalaminer.utils._
@@ -14,7 +27,9 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	}
 	case class DeviceId(bus: Int, address: Int, port: Int, desc: DeviceDescriptor) {
 		lazy val idKey = Seq(bus, address, desc.vendor.toInt,
-			desc.product.toInt).map(intToBytes(_).drop(2).toHex).mkString(".")
+			desc.product.toInt).map(intToBytes(_).drop(2).toHex).mkString("-")
+
+		lazy val portId = Seq(bus, address, port).map(intToBytes(_).drop(3).toHex).mkString("-")
 
 		override def toString = s"DeviceId($idKey)"
 	}
@@ -30,30 +45,56 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	sealed trait IrpRequest extends Command {
 		def interface: Interface
 		def endpoint: Endpoint
+		def isRead: Boolean
 	}
-	sealed trait BulkIrpRequest extends IrpRequest
-	sealed trait ControlIrpRequest extends IrpRequest
+	sealed trait BulkIrpRequest extends IrpRequest {
+		def id: Int
+	}
+	sealed trait ControlIrpRequest extends IrpRequest {
+		def irp: ControlIrp
+	}
 
 	//host commands
 	sealed trait HostCommand extends Command
 	sealed trait HostResponse extends Response
 
+	sealed trait Error extends Exception {
+		override def fillInStackTrace() = this
+	}
+
+	case class IrpTimeoutException(irp: IrpRequest)
+			extends Exception("IRP timed out: " + irp) with Error
+	case class IrpError(irp: IrpRequest)
+			extends Exception("IRP failed " + irp) with Error
+	case class IrpCancelled(irp: IrpRequest)
+			extends Exception("IRP cancelled " + irp) with Error
+	case class IrpStall(irp: IrpRequest)
+			extends Exception("IRP stalled " + irp) with Error
+	case object IrpNoDevice
+			extends Exception("IRP no device found!") with Error
+	case class IrpOverflow(irp: IrpRequest)
+			extends Exception("IRP transfer overflowed " + irp) with Error
+
 	case class DeviceDisconnected(deviceId: DeviceId) extends HostResponse
 	case class DeviceConnected(deviceId: DeviceId) extends HostResponse
 
+	//TODO: add GetDevices
 	case object Subscribe extends Command
 	case object UnSubscribe extends Command
 
-	case class RefFor(deviceId: Usb.DeviceId) extends HostCommand
-	case class DeviceRef(deviceId: Usb.DeviceId, ref: Option[ActorRef]) extends HostResponse
+	case object Close extends Command
+	case class Connect(deviceId: Usb.DeviceId) extends HostCommand
+	case class Connected(deviceId: Usb.DeviceId, ref: Option[ActorRef]) extends HostResponse
 
 	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
 		def interface = ControlInterface
 		def endpoint = ControlEndpoint
+		def isRead = true
 	}
 	case class SendControlIrp(irp: ControlIrp, dat: Seq[Byte] = Nil) extends ControlIrpRequest {
 		def interface = ControlInterface
 		def endpoint = ControlEndpoint
+		def isRead = false
 	}
 
 	case class ControlIrpResponse(irp: ControlIrp,
@@ -61,9 +102,11 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 
 	case class ReceiveBulkTransfer(interface: Interface, length: Int, id: Int = -1) extends BulkIrpRequest {
 		def endpoint = interface.input
+		def isRead = true
 	}
 	case class SendBulkTransfer(interface: Interface, dat: Seq[Byte], id: Int = -1) extends BulkIrpRequest {
 		def endpoint = interface.output
+		def isRead = false
 	}
 
 	case class BulkTransferResponse(interface: Interface,
@@ -130,15 +173,15 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 
 class UsbExt(system: ExtendedActorSystem) extends akka.io.IO.Extension {
 	val Settings = new Settings(system.settings.config.getConfig("com.colingodsey.usb"))
-	class Settings private[UsbExt] (_config: Config) extends SelectionHandlerSettings(_config) {
+	class Settings private[UsbExt] (_config: Config) {// extends SelectionHandlerSettings(_config) {
 		//import akka.util.Helpers.ConfigOps
 		import _config._
 
 		val NrOfSelectors = 1
 
-		override def MaxChannelsPerSelector: Int = 1
+		def MaxChannelsPerSelector: Int = 1
 	}
 
-	val manager = system.actorOf(Props[UsbHost], name = "IO-Usb")
+	val manager = system.actorOf(Props(classOf[UsbHost], UsbExt.this), name = "IO-Usb")
 	def getManager: ActorRef = manager
 }

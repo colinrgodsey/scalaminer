@@ -5,10 +5,10 @@ ScalaMiner
 
 ScalaMiner is a Scala/JVM implementation of several mining abilities available through
 software such as CGMiner and BFGMiner. This mining platform will give you a single
-process that can handle all your mining device needs. Compatible with popular
-LTC/BTC mining devices (Scrypt/SHA256) and more in the works, this will give
+performant process that can handle all of your mining device needs. Compatible with popular
+LTC(Scrypt)/BTC(SHA256) mining devices (and more in the works), this will give
 you a stable, unified, cross-platform solution. It utilizes Akka actors for
-concurrency and usb4java/javax.usb for usb access.
+concurrency and usb4java/libusb for usb device control.
 
 **Goals**
 
@@ -79,11 +79,15 @@ directory. Make sure to configure your pools, or it uses the default (as seen in
 
 **Known Issues**
 
-libusb on OSX seems to have trouble sometimes (especially OSX 10.9). Look into [compiling
+* libusb on OSX seems to have trouble sometimes (especially OSX 10.9). Look into [compiling
 your own usb4java native driver](http://usb4java.org/nativelibs.html), or help
 out the fine folks at libusb and/or usb4java diagnose the issue.
+* No rules file for Debian/Ubuntu. Should be able to use the same one from
+[cgminer](https://github.com/ckolivas/cgminer/blob/master/01-cgminer.rules) and add your
+devices. Or just run the thing as root.
 
 **[License](https://raw.githubusercontent.com/colinrgodsey/scalaminer/master/LICENSE)**
+==========
 
 ScalaMiner is offered as open source under GPL v3. Future licensing may allow closed-source
 implementations of plugins/drivers (different license for plugin/common libraries).

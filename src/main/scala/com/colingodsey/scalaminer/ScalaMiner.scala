@@ -13,10 +13,8 @@
 
 package com.colingodsey.scalaminer
 
-import javax.usb._
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
-import javax.usb.event.{UsbDeviceDataEvent, UsbDeviceErrorEvent, UsbDeviceEvent, UsbDeviceListener}
 import java.io.{ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
@@ -118,85 +116,6 @@ object ScalaMinerMain extends App {
 	}
 }
 
-class ExecutorActor extends Actor with ActorLogging {
-	import scala.concurrent.blocking
-
-	def receive: Receive = {
-		case "alive" => sender ! true
-
-		case x: Callable[_] => try blocking(x.call()) catch {
-			case x: Throwable =>
-				log.error(x, "ExecutorActor fail")
-		}
-
-		case x: Runnable => try blocking(x.run()) catch {
-			case x: Throwable =>
-				log.error(x, "ExecutorActor fail")
-		}
-	}
-}
-
-class ScalaMinerEC extends org.usb4java.javax.ExecutorServiceProvider {
-	def system = ScalaMinerMain.system
-	lazy val log = akka.event.Logging(system, this.getClass)
-
-	def newExecutorService(): ExecutorService = new ExecutorService {
-		val ref = ScalaMinerEC.this.synchronized(system.actorOf(Props[ExecutorActor].withDispatcher(
-			"com.colingodsey.scalaminer.usb-blocking-dispatcher")))
-		@volatile private var running = true
-		@volatile private var terminated = false
-
-		override def shutdown(): Unit = {
-			system stop ref
-			running = false
-		}
-
-		override def execute(command: Runnable): Unit = if(running) {
-			ref ! command
-		} else sys.error("Already shut down!")
-
-		override def invokeAny[T](tasks: util.Collection[_ <: Callable[T]],
-				timeout: Long, unit: TimeUnit): T = ???
-
-		override def invokeAny[T](tasks: util.Collection[_ <: Callable[T]]): T = ???
-
-		override def invokeAll[T](tasks: util.Collection[_ <: Callable[T]],
-				timeout: Long, unit: TimeUnit): util.List[Future[T]] = ???
-
-		override def invokeAll[T](tasks: util.Collection[_ <: Callable[T]]): util.List[Future[T]] = ???
-
-		override def submit(task: Runnable): Future[_] = ???
-
-		override def submit[T](task: Runnable, result: T): Future[T] = ???
-
-		override def submit[T](task: Callable[T]): Future[T] = ???
-
-		override def awaitTermination(timeout: Long, unit: TimeUnit): Boolean = {
-			val dur = FiniteDuration(timeout, unit)
-			implicit def to = Timeout(dur)
-			implicit def ec = system.dispatcher
-
-			try Await.result((ref ? "alive"), dur + 200.millis) catch {
-				case x: Throwable =>
-					//log.error(x, "Failied killing ec actor!")
-			}
-
-			terminated = true
-
-			true
-		}
-
-		override def isTerminated: Boolean = terminated
-
-		override def isShutdown: Boolean = !running
-
-		override def shutdownNow(): util.List[Runnable] = {
-			shutdown()
-			Nil
-		}
-	}
-}
-
 object MinerDriver {
 
 }
@@ -216,24 +135,6 @@ case class Work(hashType: ScalaMiner.HashType, data: Seq[Byte],
 				midstate: Seq[Byte], target: Seq[Byte])
 
 case class Nonce(work: Work, nonce: Seq[Byte], extraNonce: Seq[Byte])
-
-
-/*case class MinerStats(started: Int = -1, short: Int = -1, submitted: Int = -1,
-		failed: Int = -1, accepted: Int = -1, tooLow: Int = -1,
-		stale: Int = -1, timeout: Int = -1) {
-	val values = Map(
-		'started -> started,
-		'short -> short,
-		'submitted -> submitted,
-		'failed -> failed,
-		'accepted -> accepted,
-		'tooLow -> tooLow,
-		'stale -> stale,
-		'timeout -> timeout
-	).map(x => x._1.toString.drop(1) -> x._2)
-
-	override def toString = s"MinerStats(${values.mkString(", ")})"
-}*/
 
 
 

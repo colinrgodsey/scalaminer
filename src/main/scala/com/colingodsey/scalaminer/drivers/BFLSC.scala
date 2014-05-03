@@ -13,10 +13,8 @@
 
 package com.colingodsey.scalaminer.drivers
 
-import javax.usb._
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
-import javax.usb.event._
 import akka.pattern._
 import spray.json._
 import java.io.{ByteArrayOutputStream, DataOutputStream}
@@ -498,8 +496,8 @@ case object BFLSC extends USBDeviceDriver {
 		def isMultiCoin = true
 
 		val interfaces = Set(Usb.Interface(0, Set(
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+			Usb.InputEndpoint(64, 1, 0),
+			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
@@ -519,8 +517,8 @@ case object BFLSC extends USBDeviceDriver {
 		def isMultiCoin = true
 
 		val interfaces = Set(Usb.Interface(0, Set(
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+			Usb.InputEndpoint(64, 1, 0),
+			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,

@@ -13,7 +13,6 @@
 
 package com.colingodsey.scalaminer.usb
 
-import javax.usb.{UsbHostManager, UsbHub, UsbDevice, UsbConst}
 import scala.concurrent.duration._
 import scala.concurrent.{Future, blocking}
 import scala.collection.JavaConversions._
@@ -30,8 +29,8 @@ import akka.actor.SupervisorStrategy.Stop
 
 
 object USBUtils {
-	def epi(i: Byte) = (UsbConst.ENDPOINT_DIRECTION_IN | i).toByte
-	def epo(i: Byte) = (UsbConst.ENDPOINT_DIRECTION_OUT | i).toByte
+	//def epi(i: Byte) = (UsbConst.ENDPOINT_DIRECTION_IN | i).toByte
+	//def epo(i: Byte) = (UsbConst.ENDPOINT_DIRECTION_OUT | i).toByte
 }
 
 //should be a case object
@@ -59,11 +58,11 @@ trait USBIdentity extends MinerIdentity {
 	def usbDeviceActorProps(device: Usb.DeviceId,
 			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
 
-	def matches(device: UsbDevice) = {
+	/*def matches(device: UsbDevice) = {
 		val desc = device.getUsbDeviceDescriptor
 
 		desc.idVendor == idVendor && desc.idProduct == idProduct
-	}
+	}*/
 
 	def matches(device: Usb.DeviceId) = {
 		val desc = device.desc

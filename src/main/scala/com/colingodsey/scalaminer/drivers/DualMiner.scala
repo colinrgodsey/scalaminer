@@ -13,7 +13,6 @@
 
 package com.colingodsey.scalaminer.drivers
 
-import javax.usb._
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
@@ -231,12 +230,12 @@ case object DualMiner extends USBDeviceDriver {
 
 		val interfaces = Set(
 			Usb.Interface(0, Set(
-				Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-				Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+				Usb.InputEndpoint(64, 1, 0),
+				Usb.OutputEndpoint(64, 2, 0)
 			)),
 			Usb.Interface(1, Set(
-				Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0),
-				Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 4, 0)
+				Usb.InputEndpoint(64, 3, 0),
+				Usb.OutputEndpoint(64, 4, 0)
 			))
 		)
 

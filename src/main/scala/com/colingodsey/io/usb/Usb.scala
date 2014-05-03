@@ -16,7 +16,6 @@ package com.colingodsey.io.usb
 import akka.actor._
 import com.colingodsey.scalaminer.utils._
 import org.usb4java.LibUsb
-import javax.usb.UsbConst
 import com.typesafe.config.Config
 import akka.io.SelectionHandlerSettings
 
@@ -123,7 +122,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	}
 
 	case object ControlEndpoint extends Endpoint {
-		def att: Byte = 0
+		//def att: Byte = 0
 		def size: Short = 0
 		def ep: Byte = 0
 		def maxPacketSize: Short = 0
@@ -133,22 +132,22 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 
 	lazy val ControlInterface = Interface(-1, Set(ControlEndpoint), -1)
 
-	case class InputEndpoint(att: Byte, size: Short, inputNum: Byte,
+	case class InputEndpoint(/*att: Byte, */size: Short, inputNum: Byte,
 			maxPacketSize: Short) extends Endpoint {
-		val ep = (UsbConst.ENDPOINT_DIRECTION_IN | inputNum).toByte
+		val ep = (LibUsb.ENDPOINT_IN | inputNum).toByte
 		def isInput: Boolean = true
 		def isOutput: Boolean = false
 	}
 
-	case class OutputEndpoint(att: Byte, size: Short, outputNum: Byte,
+	case class OutputEndpoint(/*att: Byte, */size: Short, outputNum: Byte,
 			maxPacketSize: Short) extends Endpoint {
-		val ep = (UsbConst.ENDPOINT_DIRECTION_OUT | outputNum).toByte
+		val ep = (LibUsb.ENDPOINT_OUT | outputNum).toByte
 		def isInput: Boolean = false
 		def isOutput: Boolean = true
 	}
 
 	trait Endpoint extends Equals {
-		def att: Byte
+		//def att: Byte
 		def size: Short
 		def ep: Byte
 		def maxPacketSize: Short

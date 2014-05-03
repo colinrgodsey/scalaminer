@@ -64,6 +64,25 @@ LTC mode implemented (still trying to find non-conflicting specs).
 only (no XLINK support). Has been tested with the 7.18 GH/s upgrade Jalapeno, should work
 with regular Jalapeno devices and the Little Singles.
 
+**Hardware requests**
+
+The current device support for ScalaMiner is based on available access to mining hardware.
+If you are a hardware manufacturer/retailer/aficionado please file an issue request
+or contact me (colinrgodsey) otherwise to get the device support added!
+
+**Donations**
+
+Donations are greatly appreciated, but there are alternate ways to support the project.
+Hardware availability is the biggest factor limiting device support. If you are a
+developer, obviously the best way to contribute would be to create the driver for it!
+Otherwise the best way to help is hardware donations and/or loans; this also tends to
+have a much quicker turnaround for development (who wants to live unused HW sitting there?).
+Other remote development options may be available, but can be more inconvenient for each side.
+If you have questions or are interested in one of these contribution paths,
+open up a GitHub Issue or contact me (colinrgodsey) otherwise.
+
+For classic coin donations, we accept BTC at 1HmmCUmGr1KYWRMosVa299z9NC9SRxyr8h
+
 **Compiling/Configuring/Running**
 
 * The project is managed with SBT. Running from source should be as simple as *sbt run*.

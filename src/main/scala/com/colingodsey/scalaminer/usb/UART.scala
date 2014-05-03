@@ -13,8 +13,7 @@
 
 package com.colingodsey.scalaminer.usb
 
-import javax.usb.UsbConst
-
+import org.usb4java.LibUsb
 
 case object CP210X {
 	val TYPE_OUT = 0x41
@@ -31,10 +30,10 @@ case object CP210X {
 case object FTDI {
 	//OSX: sudo kextunload -bundle com.apple.driver.AppleUSBFTDI
 
-	val TYPE_OUT = (UsbConst.REQUESTTYPE_TYPE_VENDOR |
-			UsbConst.REQUESTTYPE_RECIPIENT_DEVICE | UsbConst.ENDPOINT_DIRECTION_OUT).toByte
-	val TYPE_IN = (UsbConst.REQUESTTYPE_TYPE_VENDOR |
-			UsbConst.REQUESTTYPE_RECIPIENT_DEVICE | UsbConst.ENDPOINT_DIRECTION_IN).toByte
+	val TYPE_OUT = (LibUsb.REQUEST_TYPE_VENDOR |
+			LibUsb.RECIPIENT_DEVICE | LibUsb.ENDPOINT_OUT).toByte
+	val TYPE_IN = (LibUsb.REQUEST_TYPE_VENDOR |
+			LibUsb.RECIPIENT_DEVICE | LibUsb.ENDPOINT_IN).toByte
 
 	val REQUEST_RESET: Byte = 0
 	val REQUEST_MODEM: Byte = 1

@@ -13,7 +13,6 @@
 
 package com.colingodsey.scalaminer.drivers
 
-import javax.usb.{UsbDevice, UsbConst}
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer._
@@ -21,7 +20,6 @@ import scala.concurrent.duration._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.network.Stratum
 import akka.util.ByteString
-import javax.usb.event.UsbPipeDataEvent
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.io.usb.Usb.DeviceId
@@ -419,8 +417,8 @@ case object GridSeed extends USBDeviceDriver {
 
 		val interfaces = Set(Usb.Interface(1, Set(
 			//Endpoint(UsbConst.ENDPOINT_TYPE_INTERRUPT, 8, epi(2), 0, false),
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0)
+			Usb.InputEndpoint(64, 1, 0),
+			Usb.OutputEndpoint(64, 3, 0)
 		)))
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
@@ -439,8 +437,8 @@ case object GridSeed extends USBDeviceDriver {
 		def timeout = gsTimeout
 
 		val interfaces = Set(Usb.Interface(0, Set(
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 1, 0)
+			Usb.InputEndpoint(64, 1, 0),
+			Usb.OutputEndpoint(64, 1, 0)
 		)))
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
@@ -458,8 +456,8 @@ case object GridSeed extends USBDeviceDriver {
 		def timeout = gsTimeout
 
 		val interfaces = Set(Usb.Interface(0, Set(
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 1, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 512, 2, 0)
+			Usb.InputEndpoint(512, 1, 0),
+			Usb.OutputEndpoint(512, 2, 0)
 		)))
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
@@ -478,8 +476,8 @@ case object GridSeed extends USBDeviceDriver {
 		def timeout = gsTimeout
 
 		val interfaces = Set(Usb.Interface(0, Set(
-			Usb.InputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 3, 0),
-			Usb.OutputEndpoint(UsbConst.ENDPOINT_TYPE_BULK, 64, 2, 0)
+			Usb.InputEndpoint(64, 3, 0),
+			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
 		def usbDeviceActorProps(device: Usb.DeviceId,

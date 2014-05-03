@@ -6,7 +6,7 @@ ScalaMiner
 ScalaMiner is a Scala/JVM implementation of several mining abilities available through
 software such as CGMiner and BFGMiner. This mining platform will give you a single
 performant process that can handle all of your mining device needs. Compatible with popular
-LTC(Scrypt)/BTC(SHA256) mining devices (and more in the works), this will give
+LTC/Scrypt and BTC/SHA256 mining devices (and more in the works), ScalaMiner will give
 you a stable, unified, cross-platform solution. It utilizes Akka actors for
 concurrency and usb4java/libusb for usb device control.
 

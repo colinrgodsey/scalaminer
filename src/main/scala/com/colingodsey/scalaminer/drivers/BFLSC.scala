@@ -42,6 +42,20 @@ import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 
+/**
+ * Device actor for BFLSC devices. Instead of a request->response style interface,
+ * the device continuously reads and parses ASCII lines. The actor may submit 2 concurrency
+ * requests, as long as one of them has discrete lines that can be handled discretely.
+ *
+ * Ex. The flush request may be issued at the same time as getResults. The result
+ * is that you may have a flush response intertwined with the getResults response.
+ * Because the flush response looks unique, we can process the line before it gets
+ * processed as part of the getResult response. So it can occur any time,
+ * as long as its presented as a discrete line, which the BFL devices seem to do.
+ * @param deviceId
+ * @param workRefs
+ * @param identity
+ */
 class BFLSC(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef],
 		val identity: USBIdentity) extends UsbDeviceActor with AbstractMiner
@@ -51,7 +65,12 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	import Constants._
 
 	def pollDelay = RES_TIME - latency
-	val maxWorkQueue = 15
+
+	/**
+	 * With Firmware 1.0.0 and a result queue of 20
+	 * With Firmware 1.2.* and a result queue of 40 but a limit of 15 replies
+	 */
+	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
 
 	def readDelay = latency
@@ -80,6 +99,10 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	val jobTimeoutTimer = context.system.scheduler.schedule(
 		1.seconds, 45.seconds, self, JobTimeouts)
 
+	/**
+	 * autoread from the interface, break lines up and send
+	 * discrete ReceiveLine events. Devices seem to never mangle lines.
+	 */
 	def responseReceive: Receive = usbBufferReceive orElse {
 		case BufferedReader.BufferUpdated(`intf`) =>
 			val buf = interfaceReadBuffer(intf)
@@ -338,6 +361,9 @@ class BFLSC(val deviceId: Usb.DeviceId,
 			case ReceiveLine("OK") if phase == 1 =>
 				send(intf, job.payload)
 				phase = 2
+			case ReceiveLine(QFULL) =>
+				log.warning("Queue fulll!")
+				finish()
 			case ReceiveLine(line) if phase == 1 =>
 				log.warning("submitWork failed with " + line)
 				finish()
@@ -578,7 +604,7 @@ case object BFLSC extends USBDeviceDriver {
 		val INPROCESS = "INPROCESS:"
 		// = Followed = by = N=1..5
 		val OKQN = "OK:QUEUED "
-		val QFULL = "QUEUE FULL"
+		val QFULL = ANERR + "QUEUE FULL"
 		val HITEMP = "HIGH TEMPERATURE RECOVERY"
 		val EMPTYSTR = "MEMORY EMPTY"
 

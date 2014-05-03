@@ -60,7 +60,7 @@ object ScalaMinerMain extends App {
 	val smConfig = config.getConfig("com.colingodsey.scalaminer")
 	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
-	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC)//, GridSeed)
+	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
 
 	def readStConn(cfg: Config) = {
 		if(cfg.hasPath("host")) {

@@ -48,7 +48,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 
 	lazy val selectedFreq = getFreqFor(freq)
 
-	override def defaultTimeout = 10000.millis
+	//override def defaultTimeout = 10000.millis
 
 	def nonceTimeout = if(isScrypt) GridSeed.scryptNonceReadTimeout
 	else GridSeed.btcNonceReadTimeout
@@ -57,10 +57,11 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 	def jobTimeout = 5.minutes
 	def altVoltage = false //hacked miners only
 
-	val defaultReadSize: Int = 0x2000 // ?
-
 	val pollDelay = 10.millis
 	val maxWorkQueue = 15
+
+	val detectId = -23
+	val chipResetId = -24
 
 	lazy val intf = identity.interfaces.head
 
@@ -69,15 +70,58 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 	var hasRead = false
 	var currentJob: Option[Stratum.Job] = None
 
+	implicit def ec = context.system.dispatcher
+
+	case object ResetPause
+
 	def startRead() {
 		//log.info("start read")
 		bufferRead(intf)
 	}
 
-	def baseReceive: Receive = usbBufferReceive orElse workReceive
+	def baseReceive: Receive = metricsReceive orElse usbBufferReceive orElse workReceive
 
 	def detecting: Receive = baseReceive orElse {
-		case BufferedReader.BufferUpdated(`intf`) =>
+		case Usb.BulkTransferResponse(`intf`, _, `chipResetId`) =>
+			context.system.scheduler.scheduleOnce(200.millis, self, ResetPause)
+		case ResetPause =>
+			if(isDual) {
+				send(intf, dualInitBytes: _*)
+				send(intf, dualResetBytes: _*)
+			} else {
+				send(intf, singleInitBytes: _*)
+				send(intf, singleResetBytes: _*)
+			}
+
+			send(intf, frequencyCommands(selectedFreq))
+
+			if(!isDual && altVoltage && fwVersion == 0x01140113) {
+				log.info("Setting alt voltage")
+				readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
+					val i = getInts(dat)(0)
+
+					val value = (i & 0xff0fffff) | 0x00300000
+
+					writeRegister(GPIOA_BASE + CRL_OFFSET, value)
+
+					// Set GPIOA pin 5 high.
+					readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
+						val i2 = getInts(dat2)(0)
+						val value2 = i2 | 0x00000020
+						writeRegister(GPIOA_BASE + ODR_OFFSET, value2)
+
+						detected()
+					}
+				}
+			} else if(altVoltage) {
+				log.error("Cannot set alt voltage when in dual or " +
+						"for fw version " + fwVersion)
+				failDetect()
+			} else detected()
+		case Usb.BulkTransferResponse(`intf`, _, `detectId`) =>
+			log.info("starting buffer")
+			bufferRead(intf)
+		case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
 			val buf = interfaceReadBuffer(intf)
 
 			if(buf.length >= READ_SIZE) {
@@ -93,43 +137,8 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 
 					log.info("Grid seed detected! Version " + bVersion.toHex)
 
-					send(intf, chipResetBytes)
-
-					if(isDual) {
-						send(intf, dualInitBytes: _*)
-						send(intf, dualResetBytes: _*)
-					} else {
-						send(intf, singleInitBytes: _*)
-						send(intf, singleResetBytes: _*)
-					}
-
-					send(intf, frequencyCommands(selectedFreq))
-
-					if(!isDual && altVoltage && fwVersion == 0x01140113) {
-						readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
-							val i = getInts(dat)(0)
-
-							val value = (i & 0xff0fffff) | 0x00300000
-
-							writeRegister(GPIOA_BASE + CRL_OFFSET, value)
-
-							// Set GPIOA pin 5 high.
-							readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
-								val i2 = getInts(dat2)(0)
-								val value2 = i2 | 0x00000020
-								writeRegister(GPIOA_BASE + ODR_OFFSET, value2)
-							}
-
-							detected()
-						}
-					} else if(altVoltage) {
-						log.error("Cannot set alt voltage when in dual or " +
-								"for fw version " + fwVersion)
-						failDetect()
-					} else detected()
+					deviceRef ! Usb.SendBulkTransfer(intf, chipResetBytes, chipResetId)
 				}
-
-				context become normal
 			}
 		case NonTerminated(_) => stash()
 	}
@@ -137,14 +146,20 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 	def detect() {
 		context become detecting
 		send(intf, chipResetBytes)
-		send(intf, detectBytes)
+		deviceRef ! Usb.SendBulkTransfer(intf, detectBytes, detectId)
 	}
 
 	def detected() {
+		log.info("Detected!! ")
+
+		sendWork()
+
 		finishedInit = true
 		context become normal
 		unstashAll()
 		bufferRead(intf)
+
+		self ! AbstractMiner.CancelWork
 	}
 
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
@@ -208,7 +223,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 		}
 	}
 
-	def normal: Receive = metricsReceive orElse usbBufferReceive orElse workReceive orElse {
+	def normal: Receive = baseReceive orElse {
 		case AbstractMiner.CancelWork => sendWork()
 		case BufferedReader.BufferUpdated(`intf`) =>
 			val buf = interfaceReadBuffer(intf)
@@ -270,22 +285,24 @@ class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
 	val lastFlow = Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex)
 
 	def doInit() {
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_LATENCY, LATENCY, controlIndex).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_AVA, controlIndex).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_AVA,
-			((INDEX_BAUD_AVA & 0xff00) | controlIndex).toShort).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex).send
-		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
-		deviceRef ! lastFlow.send
+		getDevice {
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_RESET, controlIndex).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_LATENCY, LATENCY, controlIndex).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA, VALUE_DATA_AVA, controlIndex).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_BAUD, VALUE_BAUD_AVA,
+				((INDEX_BAUD_AVA & 0xff00) | controlIndex).toShort).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_FLOW, VALUE_FLOW, controlIndex).send
+			deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
+			deviceRef ! lastFlow.send
 
-		context become (baseReceive orElse {
-			case Usb.ControlIrpResponse(`lastFlow`, _) =>
-				detect()
-				unstashAll()
-			case NonTerminated(_) => stash()
-		})
+			context become (baseReceive orElse {
+				case Usb.ControlIrpResponse(`lastFlow`, _) =>
+					detect()
+					unstashAll()
+				case NonTerminated(_) => stash()
+			})
+		}
 	}
 
 }
@@ -299,12 +316,12 @@ class GridSeedSGSMiner(val deviceId: Usb.DeviceId,
 	def identity: USBIdentity = GSD
 	def hashType = ScalaMiner.Scrypt
 	def readDelay = 20.millis
-	def readSize = 512 // ?
+	def readSize = 0x2000 // ?
 
 	override def isFTDI = false
 
 	def doInit() {
-		detect()
+		getDevice(detect())
 	}
 }
 

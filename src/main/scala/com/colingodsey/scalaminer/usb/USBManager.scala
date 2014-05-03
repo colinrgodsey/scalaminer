@@ -127,7 +127,6 @@ class UsbDeviceManager(config: Config)
 	def receive = {
 		case Start =>
 			context watch libUsbHost
-
 			libUsbHost ! Usb.Subscribe
 		case MinerMetrics.Subscribe =>
 			metricsSubs += sender
@@ -135,7 +134,9 @@ class UsbDeviceManager(config: Config)
 		case MinerMetrics.UnSubscribe =>
 			metricsSubs -= sender
 			workerMap.foreach(_._2.tell(MinerMetrics.UnSubscribe, sender))
-		case IdentityReset => failedIdentityMap = Map.empty
+		case IdentityReset =>
+			failedIdentityMap = Map.empty
+			self ! PollDevices
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
 		case AddDriver(drv) => usbDrivers += drv
 		case FailedIdentify(ref, identity) =>

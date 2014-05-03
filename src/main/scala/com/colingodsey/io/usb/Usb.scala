@@ -62,7 +62,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 		override def fillInStackTrace() = this
 	}
 
-	case class IrpTimeoutException(irp: IrpRequest)
+	case class IrpTimeout(irp: IrpRequest)
 			extends Exception("IRP timed out: " + irp) with Error
 	case class IrpError(irp: IrpRequest)
 			extends Exception("IRP failed " + irp) with Error

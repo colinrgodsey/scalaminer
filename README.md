@@ -17,21 +17,23 @@ concurrency and usb4java/javax.usb for usb access.
 implementation is neither destructive nor incompatible with existing drivers.
 * Provide a more efficient and performant stratum proxy for older devices.
 * Provide a durable hot-swap system that is tolerant of device failures. No more segfaults
-or disalbed devices!
+or disabled devices!
 * Utilize reactive programming principles to reduce overhead and enhance scalability. 
 * Implement functionality in a distributed way that will take advantage of multi-core systems.
 * Support ARM devices, and keep a small RAM footprint (less than 100 MB)
+* Minimize kernel load to improve latency with USB and network devices.
+* Provide support for alternate JVMs (currently only tested in HotSpot 1.7 for ARM and x64)
 
 **Libraries**
 
-* [scrypt](https://github.com/wg/scrypt) - offers a pluggable native driver for extra performance
+* [scrypt](https://github.com/wg/scrypt) - Offers a pluggable native driver for extra performance
 * [usb4java](https://github.com/usb4java/usb4java) - requires libusb native driver.
 See their instructions on how to compile it if the included drivers are broken or don’t
 include your platform.
 * io.Usb - A fully reactive implementation of libusb using the akka.io framework, written
  specifically for ScalaMiner. Currently unpublished, but the code is available in this repo.
-* [Akka](http://akka.io/)
-* [Spray](http://spray.io/)
+* [Akka](http://akka.io/) - Amazingly strong actor-based concurrency platform for Scala/Java.
+* [Spray](http://spray.io/) - Akka actor based HTTP library using the akka.io framework.
 * SLF4J
 
 **Benefits**
@@ -47,7 +49,7 @@ lower thread counts, reduce context-switching and thread stack overhead.
 
 **Devices**
 
-* [Stratum](http://mining.bitcoin.cz/stratum-mining) Proxy - implements a
+* [Stratum](http://mining.bitcoin.cz/stratum-mining) Proxy - Implements a
 GetWork proxy that can be used with older devices to connect
 to a stratum pool. The fully concurrent proxy will give you much improved performance over
 the single-thread [Python proxy](https://github.com/slush0/stratum-mining-proxy) by Slush.
@@ -62,9 +64,22 @@ LTC mode implemented (still trying to find non-conflicting specs).
 only (no XLINK support). Has been tested with the 7.18 GH/s upgrade Jalapeno, should work
 with regular Jalapeno devices and the Little Singles.
 
+**Compiling/Configuring/Running**
+
+* The project is managed with SBT. Running from source should be as simple as *sbt run*.
+* To prepare a bundled jar, use *sbt assembly*. This will create a jar with all deps and
+the default config in reference.conf (override using application.conf in the base dir).
+* See the Known Issues section below for instructions on how to compile the native driver if one
+of the provided ones doesn't work for you.
+* Configuration is done using Typesafe Config. Refer to the
+[*reference.conf*](https://github.com/colinrgodsey/scalaminer/blob/master/src/main/resources/reference.conf)
+file for config fields/structure. Place your overrides in *application.conf* in the base
+directory. Make sure to configure your pools, or it uses the default (as seen in *reference.conf*)!
+* More info coming soon....
+
 **Known Issues**
 
-libusb on OSX seems to have trouble sometimes (especially 10.9). Look into [compiling
+libusb on OSX seems to have trouble sometimes (especially OSX 10.9). Look into [compiling
 your own usb4java native driver](http://usb4java.org/nativelibs.html), or help
 out the fine folks at libusb and/or usb4java diagnose the issue.
 

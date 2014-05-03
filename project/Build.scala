@@ -7,7 +7,7 @@ import AssemblyKeys._
 
 object ProjectBuild extends Build {
 	val Organization = "com.colingodsey"
-	val Version = "3.7.1"
+	val Version = "0.1"
 	val ScalaVersion = "2.10.4"
 	val PlatformVersion = "0.4"
 

@@ -68,7 +68,7 @@ libusb on OSX seems to have trouble sometimes (especially 10.9). Look into [comp
 your own usb4java native driver](http://usb4java.org/nativelibs.html), or help
 out the fine folks at libusb and/or usb4java diagnose the issue.
 
+**[License](https://raw.githubusercontent.com/colinrgodsey/scalaminer/master/LICENSE)**
 
-**[License](./LICENSE)**
 ScalaMiner is offered as open source under GPL v3. Future licensing may allow closed-source
 implementations of plugins/drivers (different license for plugin/common libraries).

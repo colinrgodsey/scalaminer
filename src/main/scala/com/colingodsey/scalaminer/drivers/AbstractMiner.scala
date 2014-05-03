@@ -45,7 +45,8 @@ object AbstractMiner {
 
 	case object CheckInitTimeout extends Command
 
-	case object StatSubscribe
+	case object StatSubscribe extends Command
+	case object WorkTimeout extends Command
 
 	def submitNonce(n: Nonce, job: Stratum.MiningJob, diff: Int,
 			target: Seq[Byte], strat: ActorRef, isScrypt: Boolean,
@@ -133,6 +134,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def hashType: ScalaMiner.HashType
 	def workRefs: Map[ScalaMiner.HashType, ActorRef]
+	def nonceTimeout: FiniteDuration
 
 	def failDetect()
 
@@ -147,6 +149,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	var extraNonceCounter = (0xFFFFF * math.random).toInt
 	var subRef: ActorRef = context.system.deadLetters
 	var finishedInit = false
+	var cancelWorkTimer: Option[Cancellable] = None
 
 	def isScrypt = hashType == ScalaMiner.Scrypt
 	def submitStale = true
@@ -176,7 +179,17 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 		x
 	}
 
+	def resetWorkTimer() {
+		cancelWorkTimer.foreach(_.cancel())
+		cancelWorkTimer = Some apply context.system.scheduler.scheduleOnce(nonceTimeout,
+			self, AbstractMiner.WorkTimeout)
+	}
+
 	def workReceive: Receive = {
+		case AbstractMiner.WorkTimeout =>
+			log.info("Nonce timeout! Restarting work...")
+			self ! AbstractMiner.CancelWork
+			resetWorkTimer()
 		case CheckInitTimeout =>
 			if(!finishedInit) sys.error("Init timeout!")
 		case Stratum.WorkAccepted =>
@@ -201,7 +214,9 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 		case x: MiningJob =>
 			miningJob = Some(x)
 			self ! AbstractMiner.CancelWork
+			resetWorkTimer()
 		case n: Nonce =>
+			resetWorkTimer()
 			//break off into async
 			Future(submitNonce(n, miningJob.get, difficulty, targetBytes, stratumRef,
 					isScrypt, self, log, difMask)) onFailure { case x: Throwable =>

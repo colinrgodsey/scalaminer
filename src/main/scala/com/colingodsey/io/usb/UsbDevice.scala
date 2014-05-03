@@ -28,7 +28,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 	def maxUsbQueueSize = 500
 	//TODO: this needs to be configurable, dynamic or otherwise
-	val irpTimeout = 20.seconds//100.millis
+	val irpTimeout = 2.minutes//100.millis
 	val irpDelay = 2.millis
 
 	var claimedInterfaces = Set.empty[Int]

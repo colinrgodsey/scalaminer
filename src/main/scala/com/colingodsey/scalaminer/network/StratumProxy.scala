@@ -63,6 +63,7 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 	def workRefs: Map[HashType, ActorRef] = Map.empty
 
 	def jobTimeout = config.getDur("job-timeout")
+	def nonceTimeout = jobTimeout
 
 	val started = Deadline.now
 

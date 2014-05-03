@@ -64,15 +64,14 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	import BFLSC._
 	import Constants._
 
-	def pollDelay = RES_TIME - latency
-
 	/**
 	 * With Firmware 1.0.0 and a result queue of 20
 	 * With Firmware 1.2.* and a result queue of 40 but a limit of 15 replies
 	 */
 	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
-
+	def pollDelay = RES_TIME - latency
+	def nonceTimeout = 11.seconds
 	def readDelay = latency
 	def readSize = 512
 	def isFTDI = true
@@ -131,6 +130,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 
 	def flushWork() {
 		send(intf, QFLUSH.getBytes)
+		workSubmitted = 0
 	}
 
 	def getTemp() {
@@ -138,8 +138,16 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	}
 
 	def getResults() = if(!overHeating) {
+		object GetResultsTimeout
+
+		val resultTimeout = context.system.scheduler.scheduleOnce(1.second,
+			self, GetResultsTimeout)
+
 		send(intf, QRES.getBytes)
 		context become (normalBaseReceive orElse {
+			case GetResultsTimeout =>
+				log.error("Get results timed out!")
+				context stop self
 			case _: BFLSCNonCriticalCommand => //discard
 			case ReceiveLine(line) if line.startsWith(INPROCESS) =>
 				val n = line.drop(INPROCESS.length).toInt
@@ -155,6 +163,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 				unstashAll()
 				context become normal
 				if(workSubmitted < maxWorkQueue) addWork()
+				resultTimeout.cancel()
 			case ReceiveLine(line) =>
 				val parts = line.split(",")
 
@@ -170,38 +179,40 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		})
 	}
 
+	def procTemperatureLine(line: String) {
+		try {
+			val ts = line.split(",").map(x => x.split(":")(1).trim)
+
+			temp1 += ts(0).toInt * 0.63
+			temp1 /= 1.63
+			temp2 += ts(1).toInt * 0.63
+			temp2 /= 1.63
+		} catch {
+			case x: Throwable =>
+				//log.error(x, "failed parsing temp " + lines1)
+				log.info("failed parsing temp " + line)
+		}
+
+		if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
+			overHeating = true
+			log.warning("Overheating! Pausing work")
+			//TODO: add fan
+			//setFan(true)
+			flushWork()
+		}
+
+		if(overHeating && (curMaxTemp + TEMP_RECOVER) < TEMP_OVERHEAT) {
+			log.warning("Cooled down. Resuming work")
+			overHeating = false
+			//setFan(false)
+		}
+
+		log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
+	}
+
 	def normalBaseReceive: Receive = responseReceive orElse metricsReceive orElse workReceive orElse {
 		case ReceiveLine(line) if line.startsWith("Temp") =>
-			try {
-				val ts = line.split(",").map(x => x.split(":")(1).trim)
-
-				temp1 += ts(0).toInt * 0.63
-				temp1 /= 1.63
-				temp2 += ts(1).toInt * 0.63
-				temp2 /= 1.63
-			} catch {
-				case x: Throwable =>
-					//log.error(x, "failed parsing temp " + lines1)
-					log.info("failed parsing temp " + line)
-			}
-
-			if(!overHeating && curMaxTemp > TEMP_OVERHEAT) {
-				overHeating = true
-				log.warning("Overheating! Pausing work")
-				//TODO: add fan
-				//setFan(true)
-				flushWork()
-			}
-
-			if(overHeating && (curMaxTemp + TEMP_RECOVER) < TEMP_OVERHEAT) {
-				log.warning("Cooled down. Resuming work")
-				overHeating = false
-				//setFan(false)
-			}
-
-			log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
-
-			true
+			procTemperatureLine(line)
 		case ReceiveLine(line) if line.startsWith("OK:FLUSHED") =>
 			val flushed = line.split(" ")(1).toInt
 

@@ -73,10 +73,10 @@ or contact me (colinrgodsey) otherwise to get the device support added!
 **Donations**
 
 Donations are greatly appreciated, but there are alternate ways to support the project.
-Hardware availability is the biggest factor limiting device support. If you are a
+Hardware availability is the biggest factor limiting device support. If you are a HW owner and
 developer, obviously the best way to contribute would be to create the driver for it!
 Otherwise the best way to help is hardware donations and/or loans; this also tends to
-have a much quicker turnaround for development (who wants to live unused HW sitting there?).
+have a much quicker turnaround for development (who wants to leave unused HW sitting there?).
 Other remote development options may be available, but can be more inconvenient for each side.
 If you have questions or are interested in one of these contribution paths,
 open up a GitHub Issue or contact me (colinrgodsey) otherwise.

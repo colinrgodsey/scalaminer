@@ -1,8 +1,6 @@
 ScalaMiner
 ==========
 
-**Overview**
-
 ScalaMiner is a Scala/JVM implementation of several mining abilities available through
 software such as CGMiner and BFGMiner. This mining platform will give you a single
 performant process that can handle all of your mining device needs. Compatible with popular

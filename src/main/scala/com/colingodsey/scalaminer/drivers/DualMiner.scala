@@ -23,6 +23,7 @@ import com.colingodsey.scalaminer.network.Stratum.{Job, MiningJob}
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.metrics.MinerMetrics
+import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 
 class DualMinerScrypt(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends DualMinerFacet {
@@ -31,7 +32,7 @@ class DualMinerScrypt(val deviceId: Usb.DeviceId,
 	def cts = false //dual mode
 
 	def receive = {
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	override def preStart() {
@@ -59,7 +60,7 @@ class DualMinerSHA256(val deviceId: Usb.DeviceId,
 			log.info("Gold nonce request sent")
 
 			bufferRead(nonceInterface)
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	override def preStart() {
@@ -104,7 +105,6 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 
 	//TODO: init timeout
 	def initReceive: Receive = metricsReceive orElse nonceReceive orElse {
-
 		case Usb.ControlIrpResponse(`highDtrIrp`, _) =>
 			context.system.scheduler.scheduleOnce(2.millis, deviceRef, lowDtrIrp.send)
 		case Usb.ControlIrpResponse(`ctsIrp`, Right(data)) if data.length >= 2 =>
@@ -173,7 +173,7 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 			sys.error("Bad CTS IRP response " + x)
 		case x @ Usb.ControlIrpResponse =>
 			log.info("IRP Resp " + x)
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	def doInit() {

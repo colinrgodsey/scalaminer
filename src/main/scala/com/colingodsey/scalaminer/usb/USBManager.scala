@@ -144,6 +144,7 @@ class UsbDeviceManager(config: Config)
 				failedIdentityMap += dev -> (s + identity)
 			}
 
+			self ! PollDevices
 		case Terminated(x) =>
 			context.system.scheduler.scheduleOnce(500.millis, self, RemoveRef(x))
 		case RemoveRef(x) =>
@@ -154,7 +155,6 @@ class UsbDeviceManager(config: Config)
 			log.warning(s"$x died! Removing ${filtered.size} devices.")
 
 			self ! PollDevices
-
 		//got an identity and a device ref
 		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
 			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
@@ -195,9 +195,7 @@ class UsbDeviceManager(config: Config)
 				if stratumEndpoints contains driver.hashType
 			} yield id -> identity
 
-			if(!matches.isEmpty) {
-				val (id, identity) = matches.head
-
+			matches foreach { case (id, identity) =>
 				self ! CreateDeviceIdentity(id, identity)
 			}
 	}

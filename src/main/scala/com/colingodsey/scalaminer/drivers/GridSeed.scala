@@ -25,6 +25,7 @@ import javax.usb.event.UsbPipeDataEvent
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.io.usb.Usb.DeviceId
+import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 
 object GridSeedMiner {
 	sealed trait Command
@@ -73,7 +74,9 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 		bufferRead(intf)
 	}
 
-	def detecting: Receive = usbBufferReceive orElse {
+	def baseReceive: Receive = usbBufferReceive orElse workReceive
+
+	def detecting: Receive = baseReceive orElse {
 		case BufferedReader.BufferUpdated(`intf`) =>
 			val buf = interfaceReadBuffer(intf)
 
@@ -128,7 +131,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 
 				context become normal
 			}
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	def detect() {
@@ -138,6 +141,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 	}
 
 	def detected() {
+		finishedInit = true
 		context become normal
 		unstashAll()
 		bufferRead(intf)
@@ -154,14 +158,14 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
 		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 
-		context.become({
+		context.become(baseReceive orElse {
 			case Usb.BulkTransferResponse(`intf`, Right(dat), `rrId`) =>
 				unstashAll()
 				context.unbecome()
 				recv(dat)
 			case Usb.BulkTransferResponse(`intf`, _, `rrId`) =>
 				sys.error("Failed read register (unknown)!")
-			case _ => stash()
+			case NonTerminated(_) => stash()
 		}, false)
 	}
 
@@ -236,7 +240,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker
 
 	def receive: Receive = {
 		case Start => doInit()
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	abstract override def preStart() {
@@ -276,12 +280,12 @@ class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_MODEM, VALUE_MODEM, controlIndex).send
 		deviceRef ! lastFlow.send
 
-		context become {
+		context become (baseReceive orElse {
 			case Usb.ControlIrpResponse(`lastFlow`, _) =>
 				detect()
 				unstashAll()
-			case _ => stash()
-		}
+			case NonTerminated(_) => stash()
+		})
 	}
 
 }

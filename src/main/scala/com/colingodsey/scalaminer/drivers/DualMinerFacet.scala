@@ -53,7 +53,7 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 	def goldNonce = (if(isScrypt) Constants.ltc_golden_nonce.fromHex
 	else Constants.btc_golden_nonce.fromHex).reverse
 
-	def nonceReceive: Receive = usbBufferReceive orElse {
+	def nonceReceive: Receive = usbBufferReceive orElse workReceive orElse {
 		//keep reading forever
 		case BufferedReader.BufferUpdated(`nonceInterface`) =>
 			val buf = interfaceReadBuffer(nonceInterface)
@@ -74,6 +74,7 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 						nonce.toList + " != " + goldNonce.toList)
 
 					goldNonceReceived = true
+					finishedInit = true
 
 					postInit()
 				} else lastJob match {

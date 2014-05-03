@@ -212,7 +212,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 			val jobOpt = midstateToJobMap.get(midstate)
 
 			if (!jobOpt.isDefined) {
-				log.warning("Cannot find job for midstate")
+				log.info("Cannot find job for midstate")
 				self ! MinerMetrics.NonceFail
 			} else {
 				self ! Nonce(jobOpt.get.work, nonce, jobOpt.get.extranonce2)

@@ -33,6 +33,7 @@ import com.colingodsey.scalaminer.Nonce
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import akka.event.LoggingAdapter
 import com.colingodsey.scalaminer.metrics.MinerMetrics
+import com.colingodsey.scalaminer.usb.UsbDeviceManager
 
 object AbstractMiner {
 	sealed trait Command
@@ -41,6 +42,8 @@ object AbstractMiner {
 
 	//responds with MinerIdentity
 	case object Identify extends Command
+
+	case object CheckInitTimeout extends Command
 
 	case object StatSubscribe
 
@@ -131,6 +134,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	def hashType: ScalaMiner.HashType
 	def workRefs: Map[ScalaMiner.HashType, ActorRef]
 
+	def failDetect()
+
 	def stratumRef = workRefs(if(isScrypt) ScalaMiner.Scrypt else ScalaMiner.SHA256)
 
 	var targetBytes: Seq[Byte] = Nil
@@ -139,6 +144,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	var extraNonceInfo: Option[Stratum.ExtraNonce] = None
 	var extraNonceCounter = (0xFFFFF * math.random).toInt
 	var subRef: ActorRef = context.system.deadLetters
+	var finishedInit = false
 
 	def isScrypt = hashType == ScalaMiner.Scrypt
 	def submitStale = true
@@ -169,6 +175,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	}
 
 	def workReceive: Receive = {
+		case CheckInitTimeout =>
+			if(!finishedInit) sys.error("Init timeout!")
 		case Stratum.WorkAccepted =>
 			log.debug("Share accepted!")
 			self ! MinerMetrics.NonceAccepted
@@ -215,5 +223,18 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			enInfo, targetBytes, needsMidstate))) match {
 		case None => Future.successful(None)
 		case Some(x) => x.map(Some(_))
+	}
+
+	abstract override def preStart() {
+		super.preStart()
+
+		context.system.scheduler.scheduleOnce(
+			10.seconds, self, CheckInitTimeout)
+	}
+
+	abstract override def postStop() {
+		super.postStop()
+
+		if(!finishedInit) failDetect()
 	}
 }

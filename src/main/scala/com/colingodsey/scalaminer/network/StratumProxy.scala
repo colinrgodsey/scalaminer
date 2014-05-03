@@ -242,6 +242,12 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 		IO(Http) ! Tcp.Unbind
 	}
 
+	override def preStart() {
+		super.preStart()
+
+		finishedInit = true
+	}
+
 	def completeWithReq: (HttpRequest => ToResponseMarshallable) => StandardRoute =
 		marshallable => new StandardRoute {
 			def apply(ctx: RequestContext): Unit =
@@ -252,4 +258,8 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 		addr <- req.header[HttpHeaders.`Remote-Address`]
 		ip <- addr.address.toOption
 	} yield ip.toString
+
+	def failDetect() {
+		sys.error("yea, this should never get called.")
+	}
 }

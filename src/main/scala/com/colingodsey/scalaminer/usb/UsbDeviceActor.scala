@@ -18,7 +18,7 @@ import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.io.usb.Usb
 import akka.io.IO
-import com.colingodsey.scalaminer.usb.UsbDeviceActor.{CheckInitTimeout, NonTerminated}
+import com.colingodsey.scalaminer.usb.UsbDeviceActor.{NonTerminated}
 
 object UsbDeviceActor {
 	//Start func, then continue/finalization func
@@ -37,7 +37,7 @@ object UsbDeviceActor {
 	}
 
 	case object CloseDevice
-	case object CheckInitTimeout
+
 }
 
 trait UsbDeviceActor extends Actor with ActorLogging with Stash {
@@ -46,8 +46,6 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def isFTDI: Boolean
 	def readDelay: FiniteDuration
-
-	var finishedInit = false
 
 	def defaultTimeout = identity.timeout
 
@@ -62,8 +60,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 		for(x <- data) deviceRef ! Usb.SendBulkTransfer(interface, x)
 
 	def waitingOnDevice(after: => Unit): Receive = {
-		case CheckInitTimeout =>
-			if(!finishedInit) sys.error("Init timeout!")
+
 		case Usb.Connected(`deviceId`, Some(ref)) =>
 			log.info("Received device ref " + ref)
 			deviceRef = ref
@@ -94,15 +91,10 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 		super.preStart()
 
 		log.info(s"Starting $identity at $deviceId")
-
-		val initTimeoutTimer = context.system.scheduler.scheduleOnce(
-			2.seconds, self, CheckInitTimeout)
 	}
 
 	abstract override def postStop() {
 		super.postStop()
-
-		if(!finishedInit) failDetect()
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

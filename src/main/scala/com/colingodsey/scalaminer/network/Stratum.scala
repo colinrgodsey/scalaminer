@@ -32,6 +32,7 @@ import scala.concurrent._
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import com.colingodsey.scalaminer.utils._
 import akka.io.Tcp.ConnectionClosed
+import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 
 object Stratum {
 	sealed trait Command
@@ -204,7 +205,7 @@ class StratumActor(conn: Stratum.StratumConnection,
 			unstashAll()
 
 			beginSession
-		case _ => stash()
+		case NonTerminated(_) => stash()
 	}
 
 	def receiveResponses: Receive = {

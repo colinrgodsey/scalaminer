@@ -59,7 +59,9 @@ object ProjectBuild extends Build {
 
 			"io.spray"            %  "spray-json_2.10"    % "1.2.3",
 
-			"com.lambdaworks"   %   "scrypt"    % "1.4.0"
+			"com.lambdaworks"   %   "scrypt"    % "1.4.0",
+
+			"org.jocl" % "jocl" % "0.1.9"
 
 
 		)

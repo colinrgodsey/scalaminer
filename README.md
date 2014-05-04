@@ -13,6 +13,7 @@ concurrency and usb4java/libusb for usb device control.
 **Goals**
 
 * Provide a performant but fault-tolerant implementation of popular miner control.
+* Provide a more elegant platform for miner control development.
 * Provide a portable and modular platform for mining device control, in which new driver
 implementation is neither destructive nor incompatible with existing drivers.
 * Provide a more efficient and performant stratum proxy for older devices.

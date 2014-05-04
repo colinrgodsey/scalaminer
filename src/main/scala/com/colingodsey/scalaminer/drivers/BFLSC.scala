@@ -332,8 +332,8 @@ class BFLSC(val deviceId: Usb.DeviceId,
 			require(merkle.length == 12)
 
 			val job2 = BFLFullRangeJob(work.midstate, merkle)
-			val job = BFLNonceJob(work.midstate, merkle, eninfo.extranonce1,
-				sjob.extranonce2)
+			/*val job = BFLNonceJob(work.midstate, merkle, eninfo.extranonce1,
+				sjob.extranonce2)*/
 
 			//startJob(job)
 			midstateToJobMap += work.midstate -> sjob

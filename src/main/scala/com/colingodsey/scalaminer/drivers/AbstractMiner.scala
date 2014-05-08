@@ -206,7 +206,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			log.warning(x.toString)
 		case Stratum.Difficulty(d) =>
 			difficulty = d
-			targetBytes = ScalaMiner.BufferType.empty ++ bintToBytes(difMask / difficulty, 32).reverse
+			targetBytes = ScalaMiner.BufferType.empty ++
+					bintToBytes(difMask / difficulty, 32).reverse
 
 			log.info("New target " + targetBytes.map(
 				"%02x" format _).mkString + " diff " + difficulty)
@@ -244,9 +245,12 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	abstract override def preStart() {
 		super.preStart()
-
 		context.system.scheduler.scheduleOnce(
 			detectTimeout, self, CheckInitTimeout)
+
+		//send one hash right away so metrics wont be skewed for hashrate
+		context.system.scheduler.scheduleOnce(
+			100.millis, self,  MinerMetrics.Hashes)
 	}
 
 	abstract override def postStop() {

@@ -85,8 +85,8 @@ For classic coin donations, we accept BTC at 1HmmCUmGr1KYWRMosVa299z9NC9SRxyr8h
 
 **Compiling/Configuring/Running**
 
-* The project is managed with SBT. Running from source should be as simple as *sbt run*.
-* To prepare a bundled jar, use *sbt assembly*. This will create a jar with all deps and
+* The project is managed with SBT. Running from source should be as simple as *./sbt run*.
+* To prepare a bundled jar, use *./sbt assembly*. This will create a jar with all deps and
 the default config in reference.conf (override using application.conf in the base dir).
 * See the Known Issues section below for instructions on how to compile the native driver if one
 of the provided ones doesn't work for you.

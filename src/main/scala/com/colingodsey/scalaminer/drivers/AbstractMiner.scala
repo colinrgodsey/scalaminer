@@ -63,6 +63,10 @@ object AbstractMiner {
 		else doubleHash(rev)
 		val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
 
+		/*val hashes = if(isScrypt) hashesForDiffScrypt(1)
+		else hashesForDiffSHA256(1)
+		self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)*/
+
 		if(getInts(nonce).head == -1) {
 			log.error("Nonce error!")
 			self ! PoisonPill
@@ -187,7 +191,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def workReceive: Receive = {
 		case AbstractMiner.WorkTimeout =>
-			log.info("Nonce timeout! Restarting work...")
+			log.debug("Nonce timeout! Restarting work...")
 			self ! AbstractMiner.CancelWork
 			resetWorkTimer()
 		case CheckInitTimeout =>

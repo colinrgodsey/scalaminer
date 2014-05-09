@@ -74,7 +74,7 @@ object CRC16 {
 		0x41, 0x81, 0x80, 0x40
 	).map(_.toByte)
 
-	def apply(dat: Seq[Byte]): Short = {
+	def apply(dat: TraversableOnce[Byte]): Short = {
 		var chCRCHi = 0xFF.toByte
 		var chCRCLo = 0xFF.toByte
 		var wIndex = 0.toShort
@@ -87,4 +87,53 @@ object CRC16 {
 
 		((chCRCHi << 8) | chCRCLo).toShort
 	}
+}
+
+//ahhh this is the weirdest function ive ever seen...
+object CRC5 {
+	def apply(dat: IndexedSeq[Byte], len: Int) = {
+		var i, j, k = 0.toByte
+		var idx = 0
+		
+		var crcIn = Array[Byte](1, 1, 1, 1, 1)
+		var crcOut = Array[Byte](1, 1, 1, 1, 1)
+		var din = 0
+
+		def byte = if(idx >= dat.length) 0.toByte else dat(idx)
+
+		j = 0x80.toByte
+		k = 0
+
+		for(i <- 0 until len) {
+			din = if((byte & j) != 0) 1 else 0
+
+			crcOut(0) = (crcIn(4) ^ din).toByte
+			crcOut(1) = crcIn(0)
+			crcOut(2) = (crcIn(1) ^ crcIn(4) ^ din).toByte
+			crcOut(3) = crcIn(2)
+			crcOut(4) = crcIn(3)
+
+			j = (j >> 1).toByte
+			k = (k + 1).toByte
+
+			if (k == 8) {
+				j = 0x80.toByte
+				k = 0
+				idx += 1
+			}
+
+			for(j <- 0 until 5) crcIn(j) = crcOut(j)
+		}
+
+		var crc = 0.toByte
+		if(crcIn(4) != 0) crc = (crc | 0x10).toByte
+		if(crcIn(3) != 0) crc = (crc | 0x08).toByte
+		if(crcIn(2) != 0) crc = (crc | 0x04).toByte
+		if(crcIn(1) != 0) crc = (crc | 0x02).toByte
+		if(crcIn(0) != 0) crc = (crc | 0x01).toByte
+
+		crc
+	}
+
+
 }

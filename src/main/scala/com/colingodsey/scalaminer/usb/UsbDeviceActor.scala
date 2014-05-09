@@ -98,6 +98,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	abstract override def postStop() {
 		super.postStop()
 
+		context stop deviceRef
+
 		log.info(s"Stopping $identity at $deviceId")
 	}
 }

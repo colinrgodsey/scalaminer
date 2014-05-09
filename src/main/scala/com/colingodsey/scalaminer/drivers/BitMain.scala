@@ -32,10 +32,9 @@ class BitMain(val deviceId: Usb.DeviceId,
 
 	def readDelay = 75.millis
 	def readSize = 8192
-
 	def nonceTimeout: FiniteDuration = 4.seconds
 	def hashType: HashType = ScalaMiner.SHA256
-	def isFTDI: Boolean = false //really is, but hey, what the heck.
+	def isFTDI: Boolean = false
 
 	def identity = BitMain.ANTS1
 
@@ -72,7 +71,7 @@ object BitMain extends USBDeviceDriver {
 	case object ANTS1 extends USBIdentity {
 		import UsbDeviceManager._
 
-		def drv = DualMiner
+		def drv = BitMain
 		def idVendor = 0x4254
 		def idProduct = 0x4153
 		def iManufacturer = ""

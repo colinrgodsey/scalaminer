@@ -7,9 +7,8 @@ import AssemblyKeys._
 
 object ProjectBuild extends Build {
 	val Organization = "com.colingodsey"
-	val Version = "0.1"
+	val Version = "0.2"
 	val ScalaVersion = "2.10.4"
-	val PlatformVersion = "0.4"
 
 	object Dependencies {
 		object V {
@@ -60,8 +59,6 @@ object ProjectBuild extends Build {
 			"io.spray"            %  "spray-json_2.10"    % "1.2.3",
 
 			"com.lambdaworks"   %   "scrypt"    % "1.4.0"
-
-
 		)
 	}
 
@@ -84,11 +81,21 @@ object ProjectBuild extends Build {
 		)
 	)
 
+	lazy val scalaminerUi = Project(
+		id = "ui",
+		base = file("ui"),
+		settings = defaultSettings ++ Seq(
+			libraryDependencies ++= Dependencies.deps
+		)
+	) dependsOn(scalaminer)
+
 	lazy val buildSettings = Defaults.defaultSettings ++ Seq(
 		organization := Organization,
 		version := Version,
 		scalaVersion := ScalaVersion,
 		crossPaths := false)
+
+	val versionObjectName = taskKey[String]("Gen'd version object name in org")
 
 	lazy val defaultSettings = buildSettings ++ assemblySettings ++ Seq(
 		resolvers += "mvn repo" at "http://repo1.maven.org/maven2/",
@@ -97,6 +104,21 @@ object ProjectBuild extends Build {
 		resolvers += "Typesafe Repo" at "http://repo.typesafe.com/typesafe/releases/",
 		resolvers += "spray repo" at "http://repo.spray.io",
 
+		versionObjectName := "ScalaMinerVersion",
+
+		sourceGenerators in Compile <+= (version, organization,
+				sourceManaged in Compile, versionObjectName) map { (v, org, dir, name) =>
+			val file = org.split("\\.").foldLeft(dir / "scala")(_ / _) / s"$name.scala"
+
+			IO.write(file,
+				s"""package $org
+				   |
+				   |object $name {
+				   |    def str = "$v"
+				   |}
+				 """.stripMargin)
+			Seq(file)
+		},
 
 		// compile options
 		scalacOptions ++= Seq("-encoding", "UTF-8", "-deprecation",

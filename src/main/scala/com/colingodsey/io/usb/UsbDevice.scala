@@ -62,6 +62,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 		}
 	}
 
+	//TODO: I feel like this is a fixed size or something...
 	def rawIrp(irpReq: ControlIrpRequest,
 			length: Short, dat: Seq[Byte], respondTo: ActorRef) {
 		val irp = irpReq.irp
@@ -103,7 +104,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		busyEndpoints += endpoint
 
-		log.debug("Starting bulk transfer " + endpoint)
+		//log.info("Starting bulk transfer " + irpReq)
 
 		if(!claimedInterfaces(inf)) {
 			log.debug("Claiming interface " + inf)
@@ -136,7 +137,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 	def receive = {
 		case Close =>
-			log.info("Asked to close. Closing...")
+			log.debug("Asked to close. Closing...")
 			context stop self
 
 		case x: Usb.ControlIrp =>
@@ -161,6 +162,8 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 	}
 
 	override def postStop() {
+		log.debug("Shutting down...")
+
 		for(x <- claimedInterfaces) try {
 			val detach = LibUsb.hasCapability(LibUsb.CAP_SUPPORTS_DETACH_KERNEL_DRIVER) &&
 					LibUsb.kernelDriverActive(handle, x) == 1
@@ -185,7 +188,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 	class IrpTransferCallback(irp: IrpRequest, respondTo: ActorRef,
 			buffer: ByteBuffer) extends TransferCallback {
 		override def processTransfer(transfer: Transfer) = try {
-			log.debug("Irp transfer done")
+			//log.info("Irp transfer done " + irp)
 
 			def bail(err: Usb.Error) {
 				LibUsb freeTransfer transfer

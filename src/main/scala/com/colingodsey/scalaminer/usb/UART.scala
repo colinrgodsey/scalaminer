@@ -14,17 +14,18 @@
 package com.colingodsey.scalaminer.usb
 
 import org.usb4java.LibUsb
+import com.colingodsey.scalaminer.utils._
 
 case object CP210X {
-	val TYPE_OUT = 0x41
+	val TYPE_OUT = 0x41.toByte
 
-	val REQUEST_IFC_ENABLE = 0x00
-	val REQUEST_DATA = 0x07
-	val REQUEST_BAUD = 0x1e
+	val REQUEST_IFC_ENABLE = 0x00.toByte
+	val REQUEST_DATA = 0x07.toByte
+	val REQUEST_BAUD = 0x1e.toByte
 
-	val VALUE_UART_ENABLE = 0x0001
-	val VALUE_DATA = 0x0303
-	val DATA_BAUD = 0x0001c200
+	val VALUE_UART_ENABLE = 0x0001.toShort
+	val VALUE_DATA = 0x0303.toShort
+	val DATA_BAUD = "0001c200".fromHex
 }
 
 case object FTDI {

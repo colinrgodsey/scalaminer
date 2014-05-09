@@ -31,11 +31,13 @@ object GridSeedMiner {
 	case object Start extends Command
 }
 
-trait GridSeedMiner extends UsbDeviceActor with AbstractMiner with MetricsWorker with BufferedReader {
+trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
+		with MetricsWorker with BufferedReader {
 	import GridSeedMiner._
 	import GridSeed.Constants._
 
 	def doInit()
+	def identity: USBIdentity
 
 	//dual BTC/LTC or just LTC
 	def isDual = false
@@ -523,24 +525,29 @@ object GSConstants {
 
 	val detectBytes = "55aac000909090900000000001000000".fromHex
 	val detectRespBytes = "55aac00090909090".fromHex
-	val chipResetBytes = "55AAC000808080800000000001000000".fromHex
+	//val chipResetBytes = "55AAC000808080800000000001000000".fromHex
 
-	val singleInitBytes = Seq(
-		/*"55AAC000C0C0C0C00500000001000000",
-		"55AAEF020000000000000000000000000000000000000000",
-		"55AAEF3020000000").map(_.fromHex)*/
-		"55aac000101010100000000001000000",
-		"55aac000808080800000000001000000",
-		"55aac000c0c0c0c00500000001000000",
-		"55aaef020000000000000000000000000000000000000000",
-		"55aaef3020000000",
+	//from GC3355_USB_Protocol_V1.1_EN.pdf
+	val chipResetBytes = "55aac000e0e0e0e00000000001000000".fromHex
+
+	val commonInitBytes = Seq(
+		"55aac000101010100000000001000000", //reset
+		"55aac000c0c0c0c00500000001000000", //5chip
+		"55aac000b0b0b0b000c2010001000000" //115200bps baud
+	).map(_.fromHex)
+
+	val singleInitBytes = commonInitBytes ++ Seq(
+		//"55AAEF3020000000", // ?
+		//"55aac000808080800000000001000000", // ??
+		"55aaef020000000000000000000000000000000000000000", //power down btc units
+		"55aaef3020000000", //not sure what these last 3 things do
 		"55aa1f2814000000",
 		"55aa1f2817000000"
 	).map(_.fromHex)
 	val singleResetBytes = Seq("55AA1F2816000000",
 		"55AA1F2817000000").map(_.fromHex)
 
-	val dualInitBytes = Seq("55AA1F2814000000",
+	val dualInitBytes = commonInitBytes ++ Seq("55AA1F2814000000",
 		"55AA1F2817000000").map(_.fromHex)
 	val dualResetBytes = Seq("55AA1F2814000000",
 		"55AA1F2817000000").map(_.fromHex)

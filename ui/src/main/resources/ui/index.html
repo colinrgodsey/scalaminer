@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<!--
+  ~ scalaminer
+  ~ ----------
+  ~ https://github.com/colinrgodsey/scalaminer
+  ~
+  ~ Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+  ~
+  ~ This program is free software; you can redistribute it and/or modify it
+  ~ under the terms of the GNU General Public License as published by the Free
+  ~ Software Foundation; either version 3 of the License, or (at your option)
+  ~ any later version.  See COPYING for more details.
+  -->
+
+<meta charset="utf-8">
+<title>Streamgraph</title>
+<style>
+
+    body {
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        margin: auto;
+        position: relative;
+        width: 960px;
+    }
+
+    button {
+        position: absolute;
+        right: 10px;
+        top: 10px;
+    }
+
+</style>
+<script src="./d3.js"></script>
+<script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
+<script>
+    var samples = [];
+    var nSamples = 0;
+    var hasInited = false;
+    var nJsKeys = 0;
+    var keyToN = {};
+    var maxYBtc = 1;
+    var maxYScrypt = 1;
+    var offsetX = 0;
+
+    var maxX = 200;
+
+    window.setInterval(function() {
+        $.get("http://localhost:8077/metrics.json", function( json ) {
+            var hps = {};
+
+            var totY = 0;
+
+            var newDeviceFound = false;
+
+            for(key in json) {
+                if(keyToN[key] || keyToN[key] === 0) continue;
+
+                keyToN[key] = nJsKeys;
+                samples[nJsKeys] = {
+                    name: key,
+                    color: nJsKeys,
+                    btc: json[key].hash == "SHA256",
+                    values: []
+                };
+
+                if(hasInited) {
+                    for(i = 0 ; i < samples[0].values.length ; i++)
+                        samples[nJsKeys].values.push({x: i, y: 0});
+
+                    console.log("new device!!")
+                    newDeviceFound = true;
+                }
+
+                nJsKeys++;
+            }
+
+            if(newDeviceFound) {
+                hasInited = false;
+            }
+
+            for(key in keyToN) {
+                var row = json[key] || {};
+
+                hps[key] = (row.hashes || {}).rate || 0;
+
+                //if(key.indexOf("BAS") != -1) hps[key] = 0;
+
+                var y = hps[key];
+
+                if(nSamples > maxX)
+                    samples[keyToN[key]].values.shift();
+
+                samples[keyToN[key]].values.push({
+                  x: nSamples,
+                  y: y
+                });
+
+                totY += y;
+            }
+            nSamples++;
+
+            if(nSamples > maxX) offsetX++;
+
+            maxYBtc = maxYScrypt = 0;
+
+            var totalsBtc = [];
+            var totalsScrypt = [];
+            for(key in keyToN) {
+                for(i in samples[keyToN[key]].values) {
+                    var item = samples[keyToN[key]].values[i];
+                    if(samples[keyToN[key]].btc)
+                        totalsBtc[i] = (totalsBtc[i] || 0) + item.y;
+                    else
+                        totalsScrypt[i] = (totalsScrypt[i] || 0) + item.y;
+                }
+            }
+
+            for(i in totalsBtc) {
+                if(totalsBtc[i] > maxYBtc) maxYBtc = totalsBtc[i];
+                if(totalsScrypt[i] > maxYScrypt) maxYScrypt = totalsScrypt[i];
+            }
+            console.log(maxYBtc, maxYScrypt)
+
+            yLinear = d3.scale.linear()
+                    .domain([0, maxYBtc * 1.5])
+                    .range([height, 0]);
+
+            yLinear2 = d3.scale.linear()
+                    .domain([0, maxYScrypt * 1.5])
+                    .range([height, 0]);
+
+            xLinear = d3.scale.linear()
+                    .domain([offsetX, offsetX + maxX])
+                    .range([0, width]);
+
+            var btcSamples = [];
+            var scryptSamples = [];
+            for(i in samples)
+                if(samples[i].btc) btcSamples.push(samples[i]);
+                else scryptSamples.push(samples[i]);
+
+            if(!hasInited) {
+                svg.remove();
+                svg2.remove();
+                hasInited = true;
+
+                svg = d3.select("body").append("svg")
+                        .attr("width", width)
+                        .attr("height", height);
+
+                svg.selectAll("path")
+                        .data(function() { return stack2(btcSamples); })
+                        .enter().append("path")
+                        .attr("d", function(d) { return area(d.values); })
+                        .style("display", "inline")
+                        .append("title")
+                           .text(function(d) { return d.name; });
+
+                svg2 = d3.select("body").append("svg")
+                        .attr("width", width)
+                        .attr("height", height);
+
+                svg2.selectAll("path")
+                        .data(function() { return stack2(scryptSamples); })
+                        .enter().append("path")
+                        .attr("d", function(d) { return area2(d.values); })
+                        .append("title")
+                        .text(function(d) { return d.name; });
+            }
+
+            if((nSamples % 5) == 0) svg.selectAll("path")
+                    .data(function() { return stack2(btcSamples); })
+                    //.enter().append("path")
+                    .transition()
+                    .duration(1000)
+                    .attr("d", function(d) { return area(d.values); })
+                    .style("fill", function(d) { return color(d.color / nJsKeys); });
+
+            if((nSamples % 5) == 0) svg2.selectAll("path")
+                    .data(function() { return stack2(scryptSamples); })
+                //.enter().append("path")
+                    .transition()
+                    .duration(1000)
+                    .attr("d", function(d) { return area2(d.values); })
+                    .style("fill", function(d) { return color2(d.color / nJsKeys); });
+        });
+    }, 1000);
+
+    var n = 20, // number of layers
+            m = 200, // number of samples per layer
+            stack = d3.layout.stack().offset("wiggle"),
+            stack2 = d3.layout.stack().offset("wiggle").values(
+                    function(d) { return d.values; });
+    var width = 270,
+            height = 400;
+
+    var xLinear = d3.scale.linear()
+            .domain([0, maxX])
+            .range([0, width]);
+
+    //.domain([0, d3.max(layers0.concat(layers1), function(layer) { return d3.max(layer, function(d) { return d.y0 + d.y; }); })])
+    var yLinear = d3.scale.linear()
+            .domain([0, 50000])//function() { return [0, 50000]; })
+            .range([height, 0]);
+
+    var yLinear2 = d3.scale.linear()
+            .domain([0, 50000])//function() { return [0, 50000]; })
+            .range([height, 0]);
+
+    var color = d3.scale.linear()
+            .range(["#aad", "#556"]);
+    var color2 = d3.scale.linear()
+            .range(["#ada", "#565"]);
+
+    var area = d3.svg.area()
+            .interpolate('basis')
+            .x(function(d) { return xLinear(d.x); })
+            .y0(function(d) { return yLinear(d.y0); })
+            .y1(function(d) { return yLinear(d.y0 + d.y); });
+    var area2 = d3.svg.area()
+            .interpolate('basis')
+            .x(function(d) { return xLinear(d.x); })
+            .y0(function(d) { return yLinear2(d.y0); })
+            .y1(function(d) { return yLinear2(d.y0 + d.y); });
+
+    var svg = d3.select("body").append("svg")
+            .attr("width", width)
+            .attr("height", height).style("display", "inline");
+
+    var svg2 = d3.select("body").append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+</script>

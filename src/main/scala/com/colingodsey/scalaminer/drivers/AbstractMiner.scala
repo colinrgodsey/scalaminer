@@ -63,6 +63,10 @@ object AbstractMiner {
 		else doubleHash(rev)
 		val hashInt = BigInt(Array(0.toByte) ++ hashBin.reverse)
 
+		/*val hashes = if(isScrypt) hashesForDiffScrypt(1)
+		else hashesForDiffSHA256(1)
+		self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)*/
+
 		if(getInts(nonce).head == -1) {
 			log.error("Nonce error!")
 			self ! PoisonPill
@@ -187,7 +191,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def workReceive: Receive = {
 		case AbstractMiner.WorkTimeout =>
-			log.info("Nonce timeout! Restarting work...")
+			log.debug("Nonce timeout! Restarting work...")
 			self ! AbstractMiner.CancelWork
 			resetWorkTimer()
 		case CheckInitTimeout =>
@@ -206,7 +210,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			log.warning(x.toString)
 		case Stratum.Difficulty(d) =>
 			difficulty = d
-			targetBytes = ScalaMiner.BufferType.empty ++ bintToBytes(difMask / difficulty, 32).reverse
+			targetBytes = ScalaMiner.BufferType.empty ++
+					bintToBytes(difMask / difficulty, 32).reverse
 
 			log.info("New target " + targetBytes.map(
 				"%02x" format _).mkString + " diff " + difficulty)
@@ -244,9 +249,12 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	abstract override def preStart() {
 		super.preStart()
-
 		context.system.scheduler.scheduleOnce(
 			detectTimeout, self, CheckInitTimeout)
+
+		//send one hash right away so metrics wont be skewed for hashrate
+		context.system.scheduler.scheduleOnce(
+			100.millis, self,  MinerMetrics.Hashes)
 	}
 
 	abstract override def postStop() {

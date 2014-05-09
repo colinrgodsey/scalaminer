@@ -16,6 +16,8 @@ package com.colingodsey.scalaminer.metrics
 import akka.actor.{ActorLogging, Terminated, ActorRef, Actor}
 import scala.concurrent.duration._
 import com.colingodsey.scalaminer.hashing.Hashing
+import com.colingodsey.scalaminer.usb.USBIdentity
+import com.colingodsey.scalaminer.{ScalaMiner, MinerIdentity}
 
 object MinerMetrics {
 	sealed trait Command
@@ -38,6 +40,9 @@ object MinerMetrics {
 
 	case object Subscribe extends Command
 	case object UnSubscribe extends Command
+	case class Identity(deviceType: String,
+			deviceId: String, hashType: ScalaMiner.HashType) extends Command
+	case object Identify extends Command
 
 	val defaultTimeFrame = 15.minutes
 
@@ -77,34 +82,60 @@ trait MetricsWorker extends Actor {
 
 	var metricSubscribers: Set[ActorRef] = Set.empty
 
+	def identity: MinerIdentity
+	def deviceName: String
+	def hashType: ScalaMiner.HashType
+
+	def metricIdentity = Identity(identity.toString,
+		deviceName.toString, hashType)
+
 	def metricsReceive: Receive = {
-		case Subscribe => metricSubscribers += sender
-		case UnSubscribe => metricSubscribers -= sender
+		case MinerMetrics.Identify =>
+			sender ! metricIdentity
+		case Subscribe =>
+			metricSubscribers += sender
+			context watch sender
+			sender ! metricIdentity
+		case UnSubscribe =>
+			metricSubscribers -= sender
+			context unwatch sender
 		case x: Command => metricSubscribers.foreach(_ ! x)
+		case Terminated(ref) if metricSubscribers(ref) =>
+			metricSubscribers -= ref
 	}
 }
 
-class MetricsActor extends Actor with ActorLogging {
-	import MinerMetrics._
-
-	implicit def ec = context.system.dispatcher
-
-	case object PurgeTimer
-	case object ReportTimer
-
-	var metricMap: Map[ActorRef, MetricsBlock] = Map.empty
-	var watching = Set[ActorRef]()
+class MetricsActor extends AbstractMetricsActor {
+	private implicit def ec = context.system.dispatcher
 
 	context.system.scheduler.schedule(1.seconds, 1.minute, self, PurgeTimer)
 	context.system.scheduler.schedule(1.seconds, 10.seconds, self, ReportTimer)
 
-	def receive: Receive = {
+	def receive = metricsReceive orElse {
 		case ReportTimer =>
 			log.info(metricMap.toString)
 		case PurgeTimer =>
 			metricMap = metricMap map { case (ref, block) =>
 				ref -> block.purged
 			}
+	}
+}
+
+trait AbstractMetricsActor extends Actor with ActorLogging {
+	import MinerMetrics._
+
+	private implicit def ec = context.system.dispatcher
+
+	case object PurgeTimer
+	case object ReportTimer
+
+	var metricMap: Map[ActorRef, MetricsBlock] = Map.empty
+	var watching = Set[ActorRef]()
+	var identities: Map[ActorRef, Identity] = Map.empty
+
+	def metricsReceive: Receive = {
+		case x: Identity =>
+			identities += sender -> x
 		case MetricValue(metric, value) =>
 			val block = metricMap.getOrElse(sender, MetricsBlock())
 
@@ -113,6 +144,7 @@ class MetricsActor extends Actor with ActorLogging {
 			if(!watching(sender)) {
 				watching += sender
 				context watch sender
+				sender ! MinerMetrics.Identify
 			}
 
 			val block = metricMap.getOrElse(sender, MetricsBlock())

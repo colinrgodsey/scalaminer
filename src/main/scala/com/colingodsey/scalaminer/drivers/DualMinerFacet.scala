@@ -104,7 +104,7 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 		send(nonceInterface, bin.take(units + 1): _*)
 	}
 
-	def normal: Receive = nonceReceive orElse metricsReceive orElse workReceive orElse {
+	def normal: Receive = nonceReceive orElse metricsReceive orElse {
 		case AbstractMiner.CancelWork => self ! StartWork
 		case StartWork =>
 			log.debug("startwork")

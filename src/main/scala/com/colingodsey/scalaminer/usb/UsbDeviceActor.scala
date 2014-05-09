@@ -19,6 +19,7 @@ import akka.actor._
 import com.colingodsey.io.usb.Usb
 import akka.io.IO
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.{NonTerminated}
+import com.colingodsey.scalaminer.MinerIdentity
 
 object UsbDeviceActor {
 	//Start func, then continue/finalization func
@@ -48,6 +49,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	def readDelay: FiniteDuration
 
 	def defaultTimeout = identity.timeout
+	def minerIdentity: MinerIdentity = identity
+	def deviceName = deviceId.idKey.toString
 
 	private implicit def ec = context.system.dispatcher
 	private implicit def system = context.system
@@ -60,7 +63,6 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 		for(x <- data) deviceRef ! Usb.SendBulkTransfer(interface, x)
 
 	def waitingOnDevice(after: => Unit): Receive = {
-
 		case Usb.Connected(`deviceId`, Some(ref)) =>
 			log.info("Received device ref " + ref)
 			deviceRef = ref
@@ -95,6 +97,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	abstract override def postStop() {
 		super.postStop()
+
+		context stop deviceRef
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

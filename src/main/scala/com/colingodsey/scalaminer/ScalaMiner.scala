@@ -19,7 +19,7 @@ import java.io.{ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.usb._
-import com.colingodsey.scalaminer.drivers.{GridSeed, BFLSC, DualMiner}
+import com.colingodsey.scalaminer.drivers._
 import akka.io.{ IO, Tcp }
 import com.colingodsey.scalaminer.network.Stratum.StratumConnection
 import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
@@ -36,6 +36,10 @@ import scala.concurrent.duration.TimeUnit
 import scala.util.{Failure, Success}
 import scala.concurrent.Await
 import com.colingodsey.io.usb.Usb
+import com.colingodsey.scalaminer.api.CGMinerAPI
+import com.colingodsey.scalaminer.network.Stratum.StratumConnection
+import scala.Some
+import com.colingodsey.scalaminer.Work
 
 object ScalaMiner {
 	type BufferType = ByteString
@@ -58,7 +62,8 @@ object ScalaMinerMain extends App {
 	val smConfig = config.getConfig("com.colingodsey.scalaminer")
 	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
-	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC, GridSeed)
+	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC,
+		GridSeed, BitMain, Icarus)
 
 	def readStConn(cfg: Config) = {
 		if(cfg.hasPath("host")) {
@@ -68,6 +73,8 @@ object ScalaMinerMain extends App {
 	}
 
 	val metricsRef = system.actorOf(Props[MetricsActor], name = "metrics")
+
+	val minerAPI = system.actorOf(Props[CGMinerAPI], name = "api")
 
 	val usbDeviceManager = if(smConfig.hasPath("devices.usb.enabled") &&
 			smConfig.getBoolean("devices.usb.enabled")) {

@@ -78,6 +78,7 @@ trait BufferedReader extends Actor with ActorLogging{
 
 	def usbBufferReceive: Receive = {
 		case BulkTransferResponse(interface, Right(dat0), _) =>
+			//log.info("Received " + dat0.length)
 			val buf = interfaceReadBuffer(interface)
 
 			//val dat = if(isFTDI) trimFTDIData(dat0.view) else dat0

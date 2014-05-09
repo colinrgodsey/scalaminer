@@ -71,7 +71,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	def pollDelay = RES_TIME - latency
 	def nonceTimeout = 11.seconds
 	def readDelay = latency
-	def readSize = 512
+	def readSize = BUFSIZ
 	def isFTDI = true
 	override def hashType: HashType = ScalaMiner.SHA256
 	val controlIndex = 0.toShort
@@ -137,12 +137,21 @@ class BFLSC(val deviceId: Usb.DeviceId,
 
 	def getResults() = if(!overHeating) {
 		object GetResultsTimeout
+		object StartRes
 
 		val resultTimeout = context.system.scheduler.scheduleOnce(1.second,
 			self, GetResultsTimeout)
 
-		send(intf, QRES.getBytes)
+		context.system.scheduler.scheduleOnce(30.millis,
+			self, StartRes)
+
+		var started = false
+
 		context become (normalBaseReceive orElse {
+			case StartRes =>
+				send(intf, QRES.getBytes)
+				started = true
+			case ReceiveLine(line) if !started => stash()
 			case GetResultsTimeout =>
 				log.error("Get results timed out!")
 				context stop self
@@ -151,7 +160,6 @@ class BFLSC(val deviceId: Usb.DeviceId,
 				val n = line.drop(INPROCESS.length).toInt
 
 				log.debug("Inprocess " + n)
-			//expectingRes = false
 			case ReceiveLine(line) if line.startsWith(RESULT) =>
 				val n = line.drop(RESULT.length).toInt
 
@@ -208,7 +216,8 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		log.debug(s"temp1: $temp1 temp2: $temp2 overHeating: $overHeating")
 	}
 
-	def normalBaseReceive: Receive = responseReceive orElse metricsReceive orElse workReceive orElse {
+	def normalBaseReceive: Receive = responseReceive orElse metricsReceive orElse
+			workReceive orElse {
 		case ReceiveLine(line) if line.startsWith("Temp") =>
 			procTemperatureLine(line)
 		case ReceiveLine(line) if line.startsWith("OK:FLUSHED") =>
@@ -527,7 +536,7 @@ case object BFLSC extends USBDeviceDriver {
 	}
 
 	object Constants {
-		val QUE_RES_LINES_MIN = 3
+		/*val QUE_RES_LINES_MIN = 3
 		val QUE_MIDSTATE = 0
 		val QUE_BLOCKDATA = 1
 
@@ -538,7 +547,7 @@ case object BFLSC extends USBDeviceDriver {
 		val QUE_CHIP_V2 = 2
 		val QUE_NONCECOUNT_V2 = 3
 		val QUE_FLD_MIN_V2 = 4
-		val QUE_FLD_MAX_V2 = (QUE_MAX_RESULTS + QUE_FLD_MIN_V2)
+		val QUE_FLD_MAX_V2 = (QUE_MAX_RESULTS + QUE_FLD_MIN_V2)*/
 
 		val SIGNATURE = 0xc1
 		val EOW = 0xfe
@@ -554,23 +563,8 @@ case object BFLSC extends USBDeviceDriver {
 
 		val QUE_MAX_RESULTS = 8
 
-		val BUFSIZ = (0x1000)
-
-		// = Should = be = big = enough
-		val APPLOGSIZ = 8192
-
-		val INFO_TIMEOUT = 999
-
-		val DI_FIRMWARE = "FIRMWARE"
-		val DI_ENGINES = "ENGINES"
-		val DI_JOBSINQUE = "JOBS IN QUEUE"
-		val DI_XLINKMODE = "XLINK MODE"
-		val DI_XLINKPRESENT = "XLINK PRESENT"
-		val DI_DEVICESINCHAIN = "DEVICES IN CHAIN"
-		val DI_CHAINPRESENCE = "CHAIN PRESENCE MASK"
-		val DI_CHIPS = "CHIP PARALLELIZATION"
-		val DI_CHIPS_PARALLEL = "YES"
-
+		//TODO: figure out if this should really be 512 or 0x1000
+		val BUFSIZ = 512 //0x1000
 
 		//commands
 		val IDENTIFY = "ZGX"
@@ -589,12 +583,10 @@ case object BFLSC extends USBDeviceDriver {
 		val FAN4 = "Z4X"
 		val LOADSTR = "ZUX"
 
-		// = Commands = (Dual = Stage)
 		val QJOB = "ZNX"
 		val QJOBS = "ZWX"
 		val SAVESTR = "ZSX"
 
-		// = Replies
 		val IDENTITY = "BitFORCE SC"
 		val BFLSC = "SHA256 SC"
 
@@ -605,7 +597,7 @@ case object BFLSC extends USBDeviceDriver {
 
 		val ANERR = "ERR:"
 		val TIMEOUT = ANERR + "TIMEOUT"
-		// = x-link = timeout = has = a = space = (a = number = follows)
+		// x-link timeout has a space (a number follows)
 		val XTIMEOUT = ANERR + "TIMEOUT "
 		val INVALID = ANERR + "INVALID DATA"
 		val ERRSIG = ANERR + "SIGNATURE"
@@ -617,16 +609,16 @@ case object BFLSC extends USBDeviceDriver {
 		val HITEMP = "HIGH TEMPERATURE RECOVERY"
 		val EMPTYSTR = "MEMORY EMPTY"
 
-		// = Queued = and = non-queued = are = the = same
+		// Queued and non-queued are the same
 		//val FullNonceRangeJob = QueueJobStructure
 		val JOBSIZ = QJOBSIZ
 
-		// = Non = queued = commands = (not = used)
+		// Non queued commands (not used)
 		val SENDWORK = "ZDX"
 		val WORKSTATUS = "ZFX"
 		val SENDRANGE = "ZPX"
 
-		// = Non = queued = work = replies = (not = used)
+		// Non queued work replies (not used)
 		val NONCE = "NONCE-FOUND:"
 		val NO_NONCE = "NO-NONCE"
 		val IDLE = "IDLE"
@@ -637,9 +629,9 @@ case object BFLSC extends USBDeviceDriver {
 		val LITTLESINGLE = "BAL"
 		val JALAPENO = "BAJ"
 
-		// = Default = expected = time = for = a = nonce = range
-		// = - = thus = no = need = to = check = until = this = + = last = time = work = was = found
-		// = 60GH/s = MiniRig = (1 = board) = or = Single
+		// Default expected time for a nonce range
+		// - thus no need to check until this + last time work was found
+		// 60GH/s MiniRig (1 board) or Single
 		val BAM_WORK_TIME = 71.58
 		val BAS_WORK_TIME = 71.58
 		// = 30GH/s = Little = Single
@@ -647,9 +639,9 @@ case object BFLSC extends USBDeviceDriver {
 		// = 4.5GH/s = Jalapeno
 		val BAJ_WORK_TIME = 954.44
 
-		// = Defaults = (slightly = over = half = the = work = time) = but = ensure = none = are = above = 100
-		// = SCAN_TIME = - = delay = after = sending = work
-		// = RES_TIME = - = delay = between = checking = for = results
+		// Defaults (slightly over half the work time) but ensure none are above 100
+		// SCAN_TIME - delay after sending work
+		// RES_TIME - delay between checking for results
 		val BAM_SCAN_TIME = 20.millis
 		val BAS_SCAN_TIME = 360.millis
 		val BAL_SCAN_TIME = 720.millis
@@ -661,7 +653,7 @@ case object BFLSC extends USBDeviceDriver {
 		//LATENCY_STD
 		val BAL_LATENCY = 12.millis
 		val BAS_LATENCY = 12.millis
-		// = For = now = a = BAM = doesn't = really = exist = - = it's = currently = 8 = independent = BASs
+		// For now a BAM doesn't really exist - it's currently 8 independent BASs
 		val BAM_LATENCY = 2
 
 		val TEMP_SLEEPMS = 5
@@ -679,15 +671,15 @@ case object BFLSC extends USBDeviceDriver {
 		val QUE_LOW_V2 = 16
 
 		val TEMP_OVERHEAT = 90
-		// = Must = drop = this = far = below = cutoff = before = resuming = work
+		// Must drop this far below cutoff before resuming work
 		val TEMP_RECOVER = 5
 
-		// = If = initialisation = fails = the = first = time,
-		// = sleep = this = amount = (ms) = and = try = again
+		// If initialisation fails the first time,
+		// sleep this amount (ms) and try again
 		val REINIT_TIME_FIRST_MS = 100
 		// = Max = ms = per = sleep
 		val REINIT_TIME_MAX_MS = 800
-		// = Keep = trying = up = to = this = many = us
+		// Keep trying up to this many us
 		val REINIT_TIME_MAX = 3000000
 	}
 }

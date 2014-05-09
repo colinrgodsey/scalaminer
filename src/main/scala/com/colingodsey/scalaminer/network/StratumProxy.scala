@@ -31,7 +31,7 @@ import com.colingodsey.scalaminer.hashing.Hashing
 import Hashing._
 import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import scala.concurrent._
-import com.colingodsey.scalaminer.{Nonce, ScalaMiner, Work}
+import com.colingodsey.scalaminer._
 import scala.collection.JavaConversions._
 import spray.can.Http
 import com.colingodsey.scalaminer.drivers.{MetricsMiner, AbstractMiner}
@@ -41,8 +41,13 @@ import spray.json.DefaultJsonProtocol._
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsWorker}
 import com.typesafe.config.Config
+import com.colingodsey.scalaminer.Nonce
+import com.colingodsey.scalaminer.network.Stratum.MiningJob
+import scala.Some
+import spray.http.HttpRequest
+import spray.routing.RequestContext
 
-object StratumProxy {
+case object StratumProxy extends MinerIdentity with MinerDriver {
 
 	case object JobTimeouts
 
@@ -50,6 +55,9 @@ object StratumProxy {
 
 	case class SubmitResult(res: String)
 
+	override def drv: MinerDriver = this
+
+	override def identities: Set[_ <: MinerIdentity] = Set.empty
 }
 
 
@@ -64,6 +72,9 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 
 	def jobTimeout = config.getDur("job-timeout")
 	def nonceTimeout = jobTimeout
+
+	def identity: MinerIdentity = StratumProxy
+	def deviceName = StratumProxy.toString
 
 	val started = Deadline.now
 
@@ -126,7 +137,8 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 		//val hash
 	}
 
-	def receive: Receive = proxyReceive orElse workReceive orElse runRoute(route) orElse metricsReceive
+	def receive: Receive = proxyReceive orElse workReceive orElse
+			runRoute(route) orElse metricsReceive
 
 	def getWorkJson(needsMidstate: Boolean): Future[Option[JsObject]] = {
 		val fut = getWorkAsync(needsMidstate)

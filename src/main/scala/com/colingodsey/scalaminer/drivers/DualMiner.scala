@@ -159,6 +159,9 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 
 				stratumUnSubscribe(stratumRef)
 				context become {
+					case x: MinerMetrics.Command =>
+						scryptChild.tell(x, sender)
+						shaChild.tell(x, sender)
 					case x: UsbDeviceManager.FailedIdentify =>
 						context.parent ! x
 				}

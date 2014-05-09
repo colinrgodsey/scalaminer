@@ -7,9 +7,8 @@ import AssemblyKeys._
 
 object ProjectBuild extends Build {
 	val Organization = "com.colingodsey"
-	val Version = "0.1"
+	val Version = "0.2"
 	val ScalaVersion = "2.10.4"
-	val PlatformVersion = "0.4"
 
 	object Dependencies {
 		object V {
@@ -96,7 +95,6 @@ object ProjectBuild extends Build {
 		resolvers += "gridgain repo" at "http://www.gridgainsystems.com/maven2/",
 		resolvers += "Typesafe Repo" at "http://repo.typesafe.com/typesafe/releases/",
 		resolvers += "spray repo" at "http://repo.spray.io",
-
 
 		// compile options
 		scalacOptions ++= Seq("-encoding", "UTF-8", "-deprecation",

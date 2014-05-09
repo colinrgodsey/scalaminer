@@ -61,6 +61,8 @@ LTC mode implemented (still trying to find non-conflicting specs).
 * [Butterfly Labs](http://www.butterflylabs.com/) BitForce SC - Single device
 only (no XLINK support). Has been tested with the 7.18 GH/s upgrade Jalapeno, should work
 with regular Jalapeno devices and the Little Singles.
+* [Bitmain](https://bitmaintech.com/) AntMiner U1/U2
+* ASICMiner Block Erupter USB
 
 **Hardware requests**
 

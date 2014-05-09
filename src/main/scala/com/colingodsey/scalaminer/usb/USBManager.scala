@@ -130,9 +130,12 @@ class UsbDeviceManager(config: Config)
 		case MinerMetrics.Subscribe =>
 			metricsSubs += sender
 			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
+			context watch sender
 		case MinerMetrics.UnSubscribe =>
 			metricsSubs -= sender
 			workerMap.foreach(_._2.tell(MinerMetrics.UnSubscribe, sender))
+		case Terminated(ref) if metricsSubs(ref) =>
+			metricsSubs -= ref
 		case IdentityReset =>
 			failedIdentityMap = Map.empty
 			self ! PollDevices

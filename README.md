@@ -105,6 +105,13 @@ out the fine folks at libusb and/or usb4java diagnose the issue.
 [cgminer](https://github.com/ckolivas/cgminer/blob/master/01-cgminer.rules) and add your
 devices. Or just run the thing as root.
 
+**Credits**
+
+Based on code from:
+
+* cgminer by Con Kolivas: https://github.com/ckolivas/cgminer
+* stratum mining proxy by Marek Palatinus: https://github.com/slush0/stratum-mining-proxy
+
 **[License](https://raw.githubusercontent.com/colinrgodsey/scalaminer/master/LICENSE)**
 ==========
 

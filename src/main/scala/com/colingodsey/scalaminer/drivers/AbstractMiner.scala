@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -137,6 +137,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	private implicit def asmEc = context.system.dispatcher
 
 	def hashType: ScalaMiner.HashType
+	//TODO: replace this with IO(Stratum) !!!!!
 	def workRefs: Map[ScalaMiner.HashType, ActorRef]
 	def nonceTimeout: FiniteDuration
 
@@ -156,6 +157,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	var cancelWorkTimer: Option[Cancellable] = None
 
 	def isScrypt = hashType == ScalaMiner.Scrypt
+
+	//TODO: ... should actually figure out stales...
 	def submitStale = true
 
 	def difMask = if(isScrypt) scryptDefaultTarget

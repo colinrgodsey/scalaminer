@@ -109,10 +109,17 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 		if(!claimedInterfaces(inf)) {
 			log.debug("Claiming interface " + inf)
 
+			log.debug("SUPPORTS DETACH " + LibUsb.hasCapability(LibUsb.CAP_SUPPORTS_DETACH_KERNEL_DRIVER))
+			log.debug("DRIVER ACTIVE " + LibUsb.kernelDriverActive(handle, inf))
+
 			val detach = LibUsb.hasCapability(LibUsb.CAP_SUPPORTS_DETACH_KERNEL_DRIVER) &&
 					LibUsb.kernelDriverActive(handle, inf) == 1
 
+			if(!detach && LibUsb.kernelDriverActive(handle, inf) == 1)
+				log.warning("Cannot detach active kernel driver. Missing libusb capability.")
+
 			if(detach) {
+				log.info("Detaching kernel driver")
 				val result = LibUsb.detachKernelDriver(handle, inf)
 				if(result != LibUsb.SUCCESS) throw new LibUsbException(
 					"Unable to detach kernel driver", result)
@@ -155,10 +162,15 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 		case x: BulkIrpRequest => // if !queueFor(x.endpoint).isEmpty =>
 			queueFor(x.endpoint) enqueue (x -> sender)
 			checkEndpointQueue(x.endpoint)
+
+		case SetConfiguration(config) =>
+			LibUsb.setConfiguration(handle, config)
 	}
 
 	override def preStart() {
 		super.preStart()
+
+		LibUsb.setAutoDetachKernelDriver(handle, true)
 	}
 
 	override def postStop() {
@@ -171,6 +183,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 			LibUsb.releaseInterface(handle, x)
 
 			if(detach) {
+				log.info("Attaching kernel driver")
 				val result = LibUsb.attachKernelDriver(handle, x)
 				if(result != LibUsb.SUCCESS) throw new LibUsbException(
 					"Unable to re-attach kernel driver", result)

@@ -82,7 +82,7 @@ trait BufferedReader extends Actor with ActorLogging{
 			val buf = interfaceReadBuffer(interface)
 
 			//val dat = if(isFTDI) trimFTDIData(dat0.view) else dat0
-			val dat = if(isFTDI) dat0.drop(2) else dat0
+			val dat = if(isFTDI) dat0.drop(2).seq else dat0.seq
 
 			if(!dat.isEmpty) log.debug("Buffering " + dat.length)
 

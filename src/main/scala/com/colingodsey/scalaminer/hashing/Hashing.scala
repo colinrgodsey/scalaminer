@@ -18,12 +18,22 @@ import com.colingodsey.Sha256
 import com.colingodsey.scalaminer.network.Stratum.{ExtraNonce, MiningJob}
 import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.utils._
+import scala.concurrent.duration._
 import scala.concurrent.duration.{FiniteDuration, Deadline}
 import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import akka.util.ByteString
 
 object Hashing {
+
+	//TODO: need some kind of calc for hashRate to nonceTimeout
+	//a full 2^32 nonce range equals 4.294967296 GH
+
+	val hashesFor32b = 4.294967296// GH
+
+	/** for 32bit nonce range */
+	def hashRateToTimeout(ghs: Double) = if(ghs != 0) (hashesFor32b / ghs).seconds
+	else 1.second
 
 	//returns little-endian
 	def calculateMidstate(header: Seq[Byte], state: Option[Seq[Byte]] = None,

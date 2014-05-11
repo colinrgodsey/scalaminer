@@ -107,7 +107,7 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 		case Usb.ControlIrpResponse(`highDtrIrp`, _) =>
 			context.system.scheduler.scheduleOnce(2.millis, deviceRef, lowDtrIrp.send)
 		case Usb.ControlIrpResponse(`ctsIrp`, Right(data)) if data.length >= 2 =>
-			log.info("Received ctsIrp " + data.toHex)
+			log.info("Received ctsIrp " + data.seq.toHex)
 			//etiher 18,96 for dual, or 2,96 for ltc. 0x000x0002,96
 			def status = (data(1) << 8) | (data(0) & 0xFF)
 			def st = (status & 0x10) == 0

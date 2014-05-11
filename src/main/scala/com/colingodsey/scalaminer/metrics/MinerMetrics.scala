@@ -40,9 +40,13 @@ object MinerMetrics {
 
 	case object Subscribe extends Command
 	case object UnSubscribe extends Command
-	case class Identity(deviceType: String,
+	case class Identity(ident: MinerIdentity,
 			deviceId: String, hashType: ScalaMiner.HashType) extends Command
 	case object Identify extends Command
+
+	case object Snapshot extends Command
+	case class SnapshotResponse(snapshots: Map[Identity,
+			Map[Metric, Counter.Snapshot]]) extends Command
 
 	val defaultTimeFrame = 15.minutes
 
@@ -74,6 +78,10 @@ object MinerMetrics {
 
 
 		override def toString = s"MetricsBlock(\n$prettyPrintCounters\n)"
+
+		def snapshot = counters map { case (metric, counter) =>
+			metric ->counter.purged.snapshot
+		}
 	}
 }
 
@@ -86,7 +94,7 @@ trait MetricsWorker extends Actor {
 	def deviceName: String
 	def hashType: ScalaMiner.HashType
 
-	def metricIdentity = Identity(identity.toString,
+	def metricIdentity = Identity(identity,
 		deviceName.toString, hashType)
 
 	def metricsReceive: Receive = {
@@ -134,6 +142,10 @@ trait AbstractMetricsActor extends Actor with ActorLogging {
 	var identities: Map[ActorRef, Identity] = Map.empty
 
 	def metricsReceive: Receive = {
+		case Snapshot => sender ! SnapshotResponse(for {
+			(ref, block) <- metricMap
+			ident <- identities get ref
+		} yield ident -> block.snapshot)
 		case x: Identity =>
 			identities += sender -> x
 		case MetricValue(metric, value) =>

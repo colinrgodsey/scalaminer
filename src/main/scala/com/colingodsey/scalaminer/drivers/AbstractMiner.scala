@@ -101,7 +101,7 @@ object AbstractMiner {
 	}
 }
 
-object MetricsMiner {
+/*object MetricsMiner {
 	sealed trait Command
 
 	sealed trait MinerMetric extends Command
@@ -126,7 +126,7 @@ object MetricsMiner {
 
 trait MetricsMiner {
 
-}
+}*/
 
 trait AbstractMiner extends Actor with ActorLogging with Stash {
 	import AbstractMiner._

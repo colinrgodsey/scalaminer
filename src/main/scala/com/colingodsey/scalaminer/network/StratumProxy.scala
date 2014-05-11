@@ -34,7 +34,7 @@ import scala.concurrent._
 import com.colingodsey.scalaminer._
 import scala.collection.JavaConversions._
 import spray.can.Http
-import com.colingodsey.scalaminer.drivers.{MetricsMiner, AbstractMiner}
+import com.colingodsey.scalaminer.drivers.{AbstractMiner}
 import com.colingodsey.scalaminer.utils._
 import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._

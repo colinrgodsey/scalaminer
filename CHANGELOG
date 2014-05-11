@@ -1,0 +1,7 @@
+* 0.2 *
+
+Added support for 'icarus' AntMiner devices
+
+* 0.3 *
+
+Auto kernel detach in place... working much better on some Linux devices with certain libusb builds.

@@ -63,7 +63,7 @@ class BitMain(val deviceId: Usb.DeviceId,
 	}
 }
 
-object BitMain extends USBDeviceDriver {
+case object BitMain extends USBDeviceDriver {
 	def hashType = ScalaMiner.SHA256
 
 	lazy val identities: Set[USBIdentity] = Set(ANTS1)

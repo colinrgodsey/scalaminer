@@ -47,13 +47,16 @@ trait USBIdentity extends MinerIdentity {
 	def idProduct: Short
 	def iManufacturer: String
 	def iProduct: String
-	//def config = 1,
+	def config: Int
 	def timeout: FiniteDuration
 
 	def latency: FiniteDuration = 32.millis
 	def name: String = toString
 
 	def interfaces: Set[Usb.Interface]
+
+	//TODO: implement tryAfter logic! super useful for AMU/ANU for example
+	def tryAfter: Set[USBIdentity] = Set()
 
 	def usbDeviceActorProps(device: Usb.DeviceId,
 			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
@@ -127,6 +130,7 @@ class UsbDeviceManager(config: Config)
 		case Start =>
 			context watch libUsbHost
 			libUsbHost ! Usb.Subscribe
+			log.info("Subscribing to host " + libUsbHost)
 		case MinerMetrics.Subscribe =>
 			metricsSubs += sender
 			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
@@ -137,6 +141,7 @@ class UsbDeviceManager(config: Config)
 		case Terminated(ref) if metricsSubs(ref) =>
 			metricsSubs -= ref
 		case IdentityReset =>
+			log.info("Resetting identities")
 			failedIdentityMap = Map.empty
 			self ! PollDevices
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref

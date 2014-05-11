@@ -15,7 +15,7 @@ package com.colingodsey.scalaminer
 
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
-import java.io.{ByteArrayOutputStream, DataOutputStream}
+import java.io.{File, ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.usb._
@@ -58,12 +58,13 @@ object ScalaMiner {
 
 object ScalaMinerMain extends App {
 	val classLoader = getClass.getClassLoader
-	val config = ConfigFactory.load(classLoader)
+	val config = ConfigFactory.parseFile(
+		new File("./scalaminer.conf")) withFallback ConfigFactory.load(classLoader)
 	val smConfig = config.getConfig("com.colingodsey.scalaminer")
 	implicit val system = ActorSystem("scalaminer", config, classLoader)
 
 	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC,
-		GridSeed, BitMain, Icarus)
+		GridSeed, BitMain, Icarus, BitFury)
 
 	def readStConn(cfg: Config) = {
 		if(cfg.hasPath("host")) {
@@ -74,14 +75,21 @@ object ScalaMinerMain extends App {
 
 	val metricsRef = system.actorOf(Props[MetricsActor], name = "metrics")
 
-	val minerAPI = system.actorOf(Props[CGMinerAPI], name = "api")
+	val minerAPI = system.actorOf(Props(classOf[CGMinerAPI],
+		metricsRef, ScalaMiner.SHA256), name = "api")
 
 	val usbDeviceManager = if(smConfig.hasPath("devices.usb.enabled") &&
 			smConfig.getBoolean("devices.usb.enabled")) {
+		val enabledDriverNames = smConfig.getStringList("devices.usb.drivers").toSet
+
 		val ref = system.actorOf(Props(classOf[UsbDeviceManager],
 			smConfig getConfig "devices.usb"), name = "usb-manager")
 		ref.tell(MinerMetrics.Subscribe, metricsRef)
-		usbDrivers.foreach(x => ref ! UsbDeviceManager.AddDriver(x))
+
+		val enabledDrivers = usbDrivers.filter(
+			x => enabledDriverNames(x.toString.toLowerCase))
+
+		enabledDrivers.foreach(x => ref ! UsbDeviceManager.AddDriver(x))
 		Some(ref)
 	} else None
 

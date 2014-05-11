@@ -5,7 +5,6 @@
  * https://github.com/colinrgodsey/scalaminer
  *
  * Copyright 2014 Colin R Godsey <colingodsey.com>
- * Copyright 2011-2014 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -128,11 +127,6 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 						log.info("No job for nonce!")
 				}
 			}
-		case BufferedReader.BufferUpdated(`intf`) =>
-			val buf = interfaceReadBuffer(intf)
-			//log.info("Buffer updated with len " + buf.length)
-
-			if(buf.length > 0) log.info(buf.toString)
 	}
 
 	abstract override def preStart() {
@@ -238,7 +232,7 @@ class ANUDevice(val deviceId: Usb.DeviceId,
 	def receive = normal
 }
 */
-object Icarus extends USBDeviceDriver {
+case object Icarus extends USBDeviceDriver {
 	def hashType = ScalaMiner.SHA256
 
 	lazy val identities: Set[USBIdentity] = Set(AMU, ANU)

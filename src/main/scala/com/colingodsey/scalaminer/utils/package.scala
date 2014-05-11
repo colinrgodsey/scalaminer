@@ -21,6 +21,7 @@ import scala.concurrent.duration.{FiniteDuration, Duration}
 import java.util.concurrent.TimeUnit
 import java.nio.ByteBuffer
 import scala.collection.IndexedSeqOptimized
+import java.io.{ObjectOutputStream, IOException, ObjectInputStream}
 
 /**
  * Created by crgodsey on 4/10/14.
@@ -42,6 +43,38 @@ package object utils {
 		val bs = x.toByteArray
 
 		Vector.fill[Byte](bytes - bs.length)(0) ++ bs
+	}
+
+	//TODO: replace with Cord from MediaMath when OSd
+	/** Wrapper class to enable serialization of all seqs */
+	@SerialVersionUID(150000343434000010L)
+	final class SerializableByteSeq private (seq0: Seq[Byte]) extends Serializable {
+		private def this() {
+			this(Nil)
+		}
+		private var theSeq = seq0
+
+		def seq = theSeq
+
+		@throws[ClassNotFoundException]
+		@throws[IOException]
+		private def readObject(stream: ObjectInputStream) {
+			val len = stream.readInt
+			theSeq = Array.fill(len)(stream.readByte.toByte)
+		}
+
+		@throws[IOException]
+		private def writeObject(stream: ObjectOutputStream) {
+			stream.writeInt(seq.length)
+			seq.foreach(b => stream.writeByte(b))
+		}
+	}
+
+	object SerializableByteSeq {
+		implicit def seqToSBS(seq: Seq[Byte]): SerializableByteSeq =
+			new SerializableByteSeq(seq)
+
+		implicit def toSeq(x: SerializableByteSeq): Seq[Byte] = x.seq
 	}
 
 	def reverseInts(dat: Seq[Byte]) = getInts(dat).reverse.flatMap(intToBytes)
@@ -94,10 +127,14 @@ package object utils {
 		def toHex = utils.bytesToHex(seq)
 		def doubleHash = utils.doubleHash(seq)
 		def reverseInts = utils.reverseInts(seq)
+		/*def serSeq: SerializableByteSeq = seq match {
+			case x: SerializableByteSeq => x
+			case _ =>
+		}*/
 	}
 
 	implicit class StringPimp(val str: String) extends AnyVal {
-		def fromHex = ByteString.empty ++ DatatypeConverter.parseHexBinary(str)
+		def fromHex: Seq[Byte] = DatatypeConverter.parseHexBinary(str)
 	}
 
 	implicit class ConfigPimp(val cfg: Config) extends AnyVal {

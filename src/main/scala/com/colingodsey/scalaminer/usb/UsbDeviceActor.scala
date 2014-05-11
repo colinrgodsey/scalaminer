@@ -69,6 +69,9 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			context watch ref
 			context.unbecome()
 			unstashAll()
+
+			deviceRef ! Usb.SetConfiguration(identity.config)
+
 			after
 		case Usb.Connected(`deviceId`, None) =>
 			sys.error("no DeviceRef found!")

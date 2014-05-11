@@ -21,6 +21,14 @@ case class Sample(value: Counter.MetricValue, time: Long = curTime)
 
 object Counter {
 	type MetricValue = Float
+
+	case class Snapshot(started: Long,
+			maxTimeFrame: FiniteDuration,
+			sum: Double,
+			rate: Double) {
+		def +(other: Snapshot) =
+			copy(sum = sum + other.sum, rate = rate + other.rate)
+	}
 }
 
 trait Counter {
@@ -40,6 +48,10 @@ trait Counter {
 
 	//in seconds
 	def rate = sum / curTimeFrame.toSeconds
+
+	def snapshot = Counter.Snapshot(
+		started, maxTimeFrame, sum, rate
+	)
 }
 
 case class ImmutableCounter(maxTimeFrame: FiniteDuration,

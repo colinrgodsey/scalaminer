@@ -15,6 +15,8 @@ package com.colingodsey.scalaminer.usb
 
 import org.usb4java.LibUsb
 import com.colingodsey.scalaminer.utils._
+import akka.actor.Actor
+import com.colingodsey.io.usb.Usb
 
 case object CP210X {
 	val TYPE_OUT = 0x41.toByte
@@ -109,4 +111,135 @@ case object PL2303 {
 	val VALUE_LINE1 = 0x080000
 	val VALUE_LINE_SIZE = 7
 	val VALUE_VENDOR = 0.toShort
+}
+
+trait MCP2210Actor extends Actor with UsbDeviceActor {
+	import MCP2210._
+
+	def isFTDI = false
+
+	lazy val intf = identity.interfaces.filter(_.interface == 0).head
+
+	var pinDesignation = IndexedSeq[Byte]()
+	var pinValue = IndexedSeq[Byte]()
+	var pinDirection = IndexedSeq[Byte]()
+	var settingsBytes = IndexedSeq[Byte]()
+
+	def newEmptyBuf = Array.fill(BUFFER_LENGTH)(0.toByte)
+
+	def getPins() {
+		val sendBuf = newEmptyBuf
+		sendBuf(0) = GET_GPIO_SETTING
+
+		deviceRef ! Usb.SendBulkTransfer(intf, sendBuf.toSeq, GET_GPIO_SETTING)
+	}
+
+	def setPins() {
+		require(settingsBytes.length == 64, "Havent received pin settings yet!")
+
+		val newBytes = newEmptyBuf
+
+		newBytes(0) = SET_GPIO_SETTING
+		newBytes(17) = settingsBytes(17)
+		for(i <- 0 until 8) {
+			newBytes(4 + i) = pinDesignation(i)
+			newBytes(13) = (newBytes(13) | (pinValue(i) << i)).toByte
+			newBytes(15) = (newBytes(13) | (pinDirection(i) << i)).toByte
+		}
+		newBytes(12) = pinDesignation(8)
+		newBytes(14) = pinValue(8)
+		newBytes(16) = pinDirection(8)
+
+		deviceRef ! Usb.SendBulkTransfer(intf, newBytes.toSeq, GET_GPIO_SETTING)
+	}
+
+	def mcpReceive: Receive = {
+		case Usb.BulkTransferResponse(`intf`, Right(dat0), GET_GPIO_SETTING) =>
+			val dat = dat0.toIndexedSeq
+
+			require(dat.length == 64)
+
+			settingsBytes = dat
+
+			val designationB = for(i <- 0 until 8) yield dat(4 + i)
+			val valueB = for(i <- 0 until 8)
+				yield (if((dat(13) & (1 << i)) != 0) 1 else 0).toByte
+			val directionB = for(i <- 0 until 8)
+				yield (if((dat(15) & (1 << i)) != 0) 1 else 0).toByte
+
+			pinDesignation = designationB :+ dat(12)
+			pinValue = valueB :+ (dat(14) & 1).toByte
+			pinDirection = directionB :+ (dat(16) & 1).toByte
+
+			require(pinDesignation.length == 9)
+	}
+}
+
+object MCP2210 {
+	/*
+	struct mcp_settings {
+	struct gpio_pin designation;
+	struct gpio_pin value;
+	struct gpio_pin direction;
+	unsigned int bitrate, icsv, acsv, cstdd, ldbtcsd, sdbd, bpst, spimode;
+	};
+	 */
+
+	/*
+	char buf[MCP2210_BUFFER_LENGTH];
+	int i;
+
+	memset(buf, 0, MCP2210_BUFFER_LENGTH);
+	buf[0] = MCP2210_GET_GPIO_SETTING;
+	if (!mcp2210_send_recv(cgpu, buf, C_MCP_GETGPIOSETTING))
+		return false;
+
+	for (i = 0; i < 8; i++) {
+		mcp->designation.pin[i] = buf[4 + i];
+		mcp->value.pin[i] = !!(buf[13] & (0x01u << i));
+		mcp->direction.pin[i] = !!(buf[15] & (0x01u << i));
+	}
+	mcp->designation.pin[8] = buf[12];
+	mcp->value.pin[8] = buf[14] & 0x01u;
+	mcp->direction.pin[8] = buf[16] & 0x01u;
+
+	return true;
+	 */
+
+
+
+	case class Pin(pin: Seq[Byte]) { //GPIO
+		require(pin.length == 9)
+	}
+	case class Settings(designation: Pin, value: Pin, direction: Pin,
+			bitrate: Int, icsv: Int, acsv: Int, cstdd: Int, ldbtscsd: Int,
+			bpst: Int, spMode: Int)
+
+	val BUFFER_LENGTH = 64
+	val TRANSFER_MAX = 60
+
+	val PIN_GPIO = 0x0
+	val PIN_CS  = 0x1
+	val PIN_DEDICATED = 0x2
+
+	val GPIO_PIN_LOW = 0
+	val GPIO_PIN_HIGH = 1
+
+	val GPIO_OUTPUT = 0
+	val GPIO_INPUT = 1
+
+	val SPI_CANCEL = 0x11.toByte
+	val GET_GPIO_SETTING = 0x20.toByte
+	val SET_GPIO_SETTING = 0x21.toByte
+	val SET_GPIO_PIN_VAL = 0x30.toByte
+	val GET_GPIO_PIN_VAL = 0x31.toByte
+	val SET_GPIO_PIN_DIR = 0x32.toByte
+	val GET_GPIO_PIN_DIR = 0x33.toByte
+	val SET_SPI_SETTING = 0x40.toByte
+	val GET_SPI_SETTING = 0x41.toByte
+	val SPI_TRANSFER = 0x42.toByte
+
+	val SPI_TRANSFER_SUCCESS = 0x00
+	val SPI_TRANSFER_ERROR_NA = 0xF7 // SPI not available due to external owner
+	val SPI_TRANSFER_ERROR_IP = 0xF8 // SPI not available due to transfer in progress
 }

@@ -41,6 +41,7 @@ http://blockexplorer.com/block/000000000019d6689c085ae165831e934ff763ae46a2a6c17
 		require(BigInt(Array[Byte](-1, -1, -1, -1)) < 0)
 		require(intToBytes(-1).toList == List[Byte](-1, -1, -1, -1))
 		require(0xFF.toByte == -1.toByte)
+		require(0xFFFF.toByte == -1.toByte)
 	}
 
 	//http://stackoverflow.com/questions/9245235/golang-midstate-sha-256-hash

@@ -55,4 +55,14 @@ final class ScalaSha256 extends Sha256 {
 		result
 	}
 
+	def initInts(ints: Seq[Int]) {
+		h0 = ints(0)
+		h1 = ints(1)
+		h2 = ints(2)
+		h3 = ints(3)
+		h4 = ints(4)
+		h5 = ints(5)
+		h6 = ints(6)
+		h7 = ints(7)
+	}
 }

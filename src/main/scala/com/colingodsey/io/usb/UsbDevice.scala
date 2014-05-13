@@ -29,6 +29,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 	def maxUsbQueueSize = 500
 	//TODO: this needs to be configurable, dynamic or otherwise
 	val irpTimeout = 2.minutes//100.millis
+	//TODO: this probably should never be here... or be configurable
 	val irpDelay = 2.millis
 
 	var claimedInterfaces = Set.empty[Int]
@@ -238,8 +239,9 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 					LibUsb freeTransfer transfer
 
 					respondTo ! r
-					context.system.scheduler.scheduleOnce(
+					if(irpDelay > 0.nanos) context.system.scheduler.scheduleOnce(
 						irpDelay, self, UnbusyEndpoint(irp.endpoint))
+					else self ! UnbusyEndpoint(irp.endpoint)
 				case LibUsb.TRANSFER_TIMED_OUT =>
 					bail(IrpTimeout(irp))
 				case LibUsb.TRANSFER_CANCELLED =>

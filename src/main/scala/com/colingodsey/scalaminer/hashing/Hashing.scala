@@ -23,6 +23,7 @@ import scala.concurrent.duration.{FiniteDuration, Deadline}
 import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import akka.util.ByteString
+import java.nio.ByteOrder
 
 object Hashing {
 
@@ -73,6 +74,8 @@ object Hashing {
 		})
 
 		val ntime = (System.currentTimeMillis / 1000) + job.dTime
+
+		implicit def byteOrder = ByteOrder.BIG_ENDIAN
 
 		val serializedHeader = ScalaMiner.BufferType.empty ++
 				job.protoVersion ++ job.previousHash ++ merkleRoot ++

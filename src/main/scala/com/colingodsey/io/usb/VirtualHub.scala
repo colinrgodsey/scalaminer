@@ -18,6 +18,7 @@ import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.utils._
 import akka.io
+import akka.remote.RemotingLifecycleEvent
 
 object VirtualUsbHost {
 	sealed trait Message
@@ -70,6 +71,7 @@ class VirtualUsbHost(usb: UsbExt) extends Actor with ActorLogging {
 			case UnSubscribe =>
 			case Connect(id) =>
 				id.hostRef.tell(Connect(id), sender)
+			case _ => log.warning("Unhandled HostRequest")
 		}
 
 		case x @ DeviceDisconnected(id) if deviceSet(id) =>
@@ -104,6 +106,8 @@ class VirtualUsbHost(usb: UsbExt) extends Actor with ActorLogging {
 
 	override def preStart() {
 		super.preStart()
+
+		context.system.eventStream.subscribe(self, classOf[RemotingLifecycleEvent])
 
 		subToHosts()
 	}

@@ -22,6 +22,8 @@ final class ScalaSha256 extends Sha256 {
 
 	def getState = Vector(h0, h1, h2, h3, h4, h5, h6, h7)
 
+	private def getK = Sha256.k
+
 	/*def getResultSeq = Vector((h0 >>> 24).toByte,
 			(h0 >>> 16).toByte, 
 			(h0 >>> 8).toByte, 
@@ -64,5 +66,52 @@ final class ScalaSha256 extends Sha256 {
 		h5 = ints(5)
 		h6 = ints(6)
 		h7 = ints(7)
+	}
+}
+
+object ScalaSha256 {
+	lazy val k = (new ScalaSha256).getK
+
+	//pretty sure this is some sort of fancy midstate
+	//copied heavily from cgminer
+	def ms3Steps(ints: IndexedSeq[Int]) = {
+		var a, b, c, d, e, f, g, h = 0
+
+		val intBits = 4 << 3 //(sizeof(x) << 3)
+
+		def CH(x: Int, y: Int, z: Int) = ((x & y) ^ (~x & z))
+		def MAJ(x: Int, y: Int, z: Int) = ((x & y) ^ (x & z) ^ (y & z))
+		def ROTR(x: Int, n: Int) = ((x >>> n) | (x << (intBits - n)))
+		def SHFR(x: Int, n: Int) = (x >>> n)
+
+		def SHA256_F1(x: Int) = (ROTR(x,  2) ^ ROTR(x, 13) ^ ROTR(x, 22))
+		def SHA256_F2(x: Int) = (ROTR(x,  6) ^ ROTR(x, 11) ^ ROTR(x, 25))
+		def SHA256_F3(x: Int) = (ROTR(x,  7) ^ ROTR(x, 18) ^ SHFR(x,  3))
+		def SHA256_F4(x: Int) =  (ROTR(x, 17) ^ ROTR(x, 19) ^ SHFR(x, 10))
+
+		a = ints(0)
+		b = ints(1)
+		c = ints(2)
+		d = ints(3)
+		e = ints(4)
+		f = ints(5)
+		g = ints(6)
+		h = ints(7)
+
+		for(i <- 0 until 3) {
+			val new_e = ints(i+16) + ScalaSha256.k(i) + h + CH(e,f,g) + SHA256_F2(e) + d
+			val new_a = ints(i+16) + ScalaSha256.k(i) + h + CH(e,f,g) + SHA256_F2(e) +
+					SHA256_F1(a) + MAJ(a,b,c)
+			d = c
+			c = b
+			b = a
+			a = new_a
+			h = g
+			g = f
+			f = e
+			e = new_e
+		}
+
+		ints.take(8) ++ Seq(a, b, c, d, e, f, g, h).reverse ++ ints.drop(16)
 	}
 }

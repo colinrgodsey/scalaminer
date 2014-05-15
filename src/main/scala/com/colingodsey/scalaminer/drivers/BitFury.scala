@@ -10,139 +10,17 @@ import com.colingodsey.scalaminer.metrics.MetricsWorker
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import akka.util.ByteString
-
-class SPIDataBuilder {
-	private var buffer = ByteString.empty
-
-	def results = buffer
-
-	def addData(addr: Short, dat: Seq[Byte]) {
-
-		val len = dat.length
-
-		if (len < 4 || len > 128) sys.error("Bad SPI data length " + len)
-
-		val otmp = Seq[Byte](
-			((len / 4 - 1) | 0xE0).toByte,
-			((addr >> 8) & 0xFF).toByte,
-			(addr & 0xFF).toByte
-		)
-
-		buffer ++= otmp
-
-		addReverse(dat)
-	}
-
-	def addBreak() = buffer :+= 0x4.toByte
-	def addFASync(n: Int) = buffer ++= Seq.fill(n)(5.toByte)
-
-	def sendConf() {
-		val FIRST_BASE = 61
-		val SECOND_BASE = 4
-
-		val nfuCounters = Seq(
-			64, 64, SECOND_BASE, SECOND_BASE+4, SECOND_BASE+2,
-			SECOND_BASE+2+16, SECOND_BASE, SECOND_BASE+1, (FIRST_BASE)%65, (FIRST_BASE+1)%65,
-			(FIRST_BASE+3)%65, (FIRST_BASE+3+16)%65, (FIRST_BASE+4)%65, (FIRST_BASE+4+4)%65,
-			(FIRST_BASE+3+3)%65, (FIRST_BASE+3+1+3)%65
-		).map(_.toByte)
-
-		for(i <- 7 to 11) configReg(i, false)
-
-		configReg(6, true) //disable OUTSLK
-		configReg(4, true) //enable slow oscillator
-		for(i <- 1 to 3) configReg(i, false)
-
-		require(nfuCounters.length == 16)
-
-		addData(0x0100, nfuCounters)
-	}
-
-	def sendInit() {
-
-		val testVecIntsPre = Seq(0xb0e72d8e, 0x1dc5b862, 0xe9e7c4a6,
-			0x3050f1f5, 0x8a1a6b7e,
-			0x7ec384e8, 0x42c1c3fc, 0x8ed158a1, /* MIDSTATE */
-			0,0,0,0,0,0,0,0,
-			/* WDATA: hashMerleRoot[7], nTime, nBits, nNonce */
-			0x8a0bb7b7, 0x33af304f, 0x0b290c1a, 0xf0c4e61f
-		)
-
-		//I guess we're calculating the result here?
-		val testVec = {
-			val sha = new ScalaSha256
-
-			sha.initInts(testVecIntsPre take 8)
-			val ints = (testVecIntsPre drop 16).flatMap(intToBytes)
-			sha.update(ints)
-			val seq = sha.digestSeq()
-
-			testVecIntsPre.take(8).flatMap(intToBytes) ++ seq ++
-					testVecIntsPre.drop(16).flatMap(intToBytes)
-		}
-
-		val w = Seq.fill(16)(0)
-			.updated(3, 0xffffffff)
-			.updated(4, 0x80000000)
-			.updated(15, 0x00000280)
-
-		addData(0x1000, w.flatMap(intToBytes))
-		addData(0x1400, w.take(8).flatMap(intToBytes))
-
-		val w2 = Seq.fill(16)(0)
-				.updated(0, 0x80000000)
-				.updated(7, 0x100)
-
-		//Prepare MS and W buffers!
-		addData(0x1900, w.take(8).flatMap(intToBytes))
-		addData(0x3000, testVec.take(19 * 4))
-	}
-
-	def configReg(reg: Int, ena: Boolean) {
-		/*
-		static const uint8_t enaconf[4] = { 0xc1, 0x6a, 0x59, 0xe3 };
-	static const uint8_t disconf[4] = { 0, 0, 0, 0 };
-
-	if (ena)
-		spi_add_data(info, 0x7000 + cfgreg * 32, enaconf, 4);
-	else
-		spi_add_data(info, 0x7000 + cfgreg * 32, disconf, 4);
-		 */
-
-		val enaConf = "c16a59e3".fromHex
-		val disConf = Seq.fill(4)(0.toByte)
-
-		if(ena) addData((0x7000 + reg * 32).toShort, enaConf)
-		else addData((0x7000 + reg * 32).toShort, disConf)
-	}
-
-	/** reverse bits in each byte */
-	def addReverse(dat: Seq[Byte]) {
-		buffer ++= dat.map { byte =>
-			var p = byte.toInt
-			p = ((p & 0xaa) >> 1) | ((p & 0x55) << 1)
-			p = ((p & 0xcc) >> 2) | ((p & 0x33) << 2)
-			p = ((p & 0xf0) >> 4) | ((p & 0x0f) << 4)
-
-			p.toByte
-		}
-	}
-
-	def setFreq(bits: Int) {
-		val freq = BigInt(1) << bits
-
-		addData(0x6000, bintToBytes(freq, 8))
-	}
-}
+import com.colingodsey.scalaminer.network.Stratum
+import com.colingodsey.Sha256
 
 class NanoFury(val deviceId: Usb.DeviceId,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends MCP2210Actor
+		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends MCP2210Actor with BitFury
 			with BufferedReader with AbstractMiner with MetricsWorker {
 	import MCP2210._
 	import NanoFury._
 
 	val nfuBits = 50 // ??
-	val nChips = 2
+	val nChips = 1
 
 	def readDelay = 0.millis//2.millis
 	def readSize = 64
@@ -157,11 +35,14 @@ class NanoFury(val deviceId: Usb.DeviceId,
 	def postInit() {
 		log.info("DONNEE!!!")
 		finishedInit = true
+		context become normal
+		unstashAll()
+		self ! AbstractMiner.CancelWork
 	}
 
 	def reinit(after: => Unit) {
 		def resetChip(n: Int) {
-			if(n < 0) postInit()
+			if(n < 0) after
 			else {
 				val builder = new SPIDataBuilder
 				builder.addBreak()
@@ -173,7 +54,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 				val dat = builder.results
 
 				spiReset {
-					transfer(dat)(resetChip(n - 1))
+					transfer(dat)(_ => resetChip(n - 1))
 				}
 			}
 		}
@@ -181,12 +62,16 @@ class NanoFury(val deviceId: Usb.DeviceId,
 		resetChip(nChips - 1)
 	}
 
-	def transfer(dat: Seq[Byte])(after: => Unit) {
+	def transfer(dat: Seq[Byte], lastDat: Seq[Byte] = Nil)(after: Seq[Byte] => Unit) {
+		log.info("Sending transfer total " + dat.length)
 		if(!dat.isEmpty) {
 			val d = dat take TRANSFER_MAX
 
-			spiSend(d)(transfer(dat drop TRANSFER_MAX)(after))
-		} else after
+			spiSend(d)(out => {
+				log.info("transfer resp " + out.toHex)
+				transfer(dat drop TRANSFER_MAX, out)(after)
+			})
+		} else after(lastDat)
 	}
 
 	// Bit-banging reset... Each 3 reset cycles reset first chip in chain
@@ -200,7 +85,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 		context.become(mcpReceive orElse {
 			case Command(SET_GPIO_SETTING, dat0) =>
 				def sendB(n: Int) {
-					if(n == 0) spiSend(Seq(0x81.toByte)) {
+					if(n == 0) spiSend(Seq(0x81.toByte)) { _ =>
 						// Deactivate override
 						pinDirection = pinValue.updated(PIN_SCK_OVR, GPIO_INPUT)
 
@@ -209,7 +94,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 						context.unbecome()
 						unstashAll()
 						after
-					} else spiSend(Seq(0x81.toByte))(sendB(n - 1))
+					} else spiSend(Seq(0x81.toByte))(_ => sendB(n - 1))
 				}
 
 				sendB(16 - 1)
@@ -237,7 +122,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 			log.info("set setings stage " + sckPinStage)
 			require(dat(1) == 0, "Failed to set spi settings! " + dat)
 			sckPinStage = 0
-			spiSend(Seq(0))(getPinVals())
+			spiSend(Seq(0))(_ => getPinVals())
 		case GotPins if sckPinStage == 0 => //from getPinVals
 			log.info("Got pins stage " + sckPinStage)
 
@@ -249,7 +134,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 		case Command(SET_SPI_SETTING, dat) if sckPinStage == 0 =>
 			require(dat(1) == 0, "Failed to set spi settings! " + dat)
 			sckPinStage = 1
-			spiSend(Seq(0))(getPinVals())
+			spiSend(Seq(0))(_ => getPinVals())
 		case GotPins if sckPinStage == 1 =>
 			log.info("Got pins stage " + sckPinStage)
 
@@ -260,7 +145,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 		case Command(SET_SPI_SETTING, dat) if sckPinStage == 1 =>
 			require(dat(1) == 0, "Failed to set spi settings! " + dat)
 			sckPinStage = 2
-			spiSend(Seq(0))(getPinVals())
+			spiSend(Seq(0))(_ => getPinVals())
 		case GotPins if sckPinStage == 2 => //from getPinVals
 			sckPinStage = 3
 
@@ -311,9 +196,13 @@ class NanoFury(val deviceId: Usb.DeviceId,
 		case NonTerminated(_) => stash()
 	}
 
-	def receive = mcpReceive orElse metricsReceive orElse workReceive orElse {
-		case "blaaalalal" =>
+	def receive = mcpReceive orElse metricsReceive orElse {
 		case NonTerminated(_) => stash()
+	}
+
+	def normal: Receive = mcpReceive orElse metricsReceive orElse workReceive orElse {
+		case AbstractMiner.CancelWork =>
+			for(i <- 0 until nChips) sendWork(i)
 	}
 
 	def init() {
@@ -340,6 +229,58 @@ object NanoFury {
 	val PIN_SCK_OVR = 5
 	val PIN_PWR_EN = 6
 	val PIN_PWR_EN0 = 7
+}
+
+trait BitFury extends BufferedReader with AbstractMiner {
+	def transfer(dat: Seq[Byte], lastDat: Seq[Byte] = Nil)(after: Seq[Byte] => Unit)
+
+	def genPayload(job: Stratum.Job) = {
+		/*
+		struct bitfury_payload {
+	unsigned char midstate[32];
+	unsigned int junk[8];
+	unsigned m7;
+	unsigned ntime;
+	unsigned nbits;
+	unsigned nnonce;
+};
+		 */
+
+		//almost positive we just need to drop 64 bytes of header and replace with midstate
+		//and zeros
+
+		val work = job.work
+
+		val dat = work.midstate ++ Array.fill(8 * 4)(0.toByte) ++
+				work.data.view.drop(64).take(12) ++ Array.fill(4)(0.toByte)
+
+		require(dat.length == 80, "len " + dat.length)
+
+		ScalaSha256 ms3Steps getInts(dat).toIndexedSeq flatMap intToBytes
+	}
+
+	def sendWork(chip: Int) {
+		val builder = new SPIDataBuilder
+
+		val opt = getWork(true)
+
+		opt foreach { job =>
+			val payload = genPayload(job)
+
+			builder.addBreak()
+			builder.addFASync(chip)
+			builder.addData(0x3000, payload.view.take(76))
+
+			log.info("Work sent to chip " + chip)
+
+			transfer(builder.results) { dat =>
+				log.info("Work resp dat " + dat)
+
+			}
+		}
+
+		if(!opt.isDefined) log.info("No work yet")
+	}
 }
 
 case object BitFury extends USBDeviceDriver {
@@ -372,5 +313,125 @@ case object BitFury extends USBDeviceDriver {
 		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[NanoFury], device, workRefs)
+	}
+}
+
+class SPIDataBuilder {
+	private var buffer = ByteString.empty
+
+	def results = buffer
+
+	def addData(addr: Short, dat: Seq[Byte]) {
+
+		val len = dat.length
+
+		if (len < 4 || len > 128) sys.error("Bad SPI data length " + len)
+
+		buffer ++= Seq[Byte](
+			((len / 4 - 1) | 0xE0).toByte,
+			((addr >> 8) & 0xFF).toByte,
+			(addr & 0xFF).toByte
+		)
+
+		addReverse(dat)
+	}
+
+	def addBreak() = buffer :+= 4.toByte
+	def addFASync(n: Int) = buffer ++= Seq.fill(n)(5.toByte)
+
+	def sendConf() {
+		val FIRST_BASE = 61
+		val SECOND_BASE = 4
+
+		val nfuCounters = Seq(
+			64, 64, SECOND_BASE, SECOND_BASE+4, SECOND_BASE+2,
+			SECOND_BASE+2+16, SECOND_BASE, SECOND_BASE+1, (FIRST_BASE)%65, (FIRST_BASE+1)%65,
+			(FIRST_BASE+3)%65, (FIRST_BASE+3+16)%65, (FIRST_BASE+4)%65, (FIRST_BASE+4+4)%65,
+			(FIRST_BASE+3+3)%65, (FIRST_BASE+3+1+3)%65
+		).map(_.toByte)
+
+		for(i <- 7 to 11) configReg(i, false)
+
+		configReg(6, true) //disable OUTSLK
+		configReg(4, true) //enable slow oscillator
+		for(i <- 1 to 3) configReg(i, false)
+
+		require(nfuCounters.length == 16)
+
+		addData(0x0100, nfuCounters)
+	}
+
+	def sendInit() {
+
+		val testVecIntsPre = Vector(0xb0e72d8e, 0x1dc5b862, 0xe9e7c4a6,
+			0x3050f1f5, 0x8a1a6b7e,
+			0x7ec384e8, 0x42c1c3fc, 0x8ed158a1, /* MIDSTATE */
+			0,0,0,0,0,0,0,0,
+			/* WDATA: hashMerleRoot[7], nTime, nBits, nNonce */
+			0x8a0bb7b7, 0x33af304f, 0x0b290c1a, 0xf0c4e61f
+		)
+
+		//super midstate?
+		val testVec = {
+			ScalaSha256.ms3Steps(testVecIntsPre).flatMap(intToBytes(_).reverse)
+		}
+
+		val w = Seq.fill(16)(0)
+				.updated(3, 0xffffffff)
+				.updated(4, 0x80000000)
+				.updated(15, 0x00000280)
+
+		val b1 = w.flatMap(intToBytes(_).reverse)
+		val b2 = w.take(8).flatMap(intToBytes(_).reverse)
+
+		require(b1.length == 16 * 4)
+		require(b2.length == 8 * 4)
+
+		addData(0x1000, b1)
+		addData(0x1400, b2)
+
+		val w2 = Seq.fill(16)(0)
+				.updated(0, 0x80000000)
+				.updated(7, 0x100)
+
+		val b3 = w2.take(8).flatMap(intToBytes(_).reverse)
+		val b4 = testVec.take(19 * 4)
+
+		require(b3.length == 8 * 4)
+		require(b4.length == 19 * 4)
+
+		//Prepare MS and W buffers!
+		addData(0x1900, b3)
+		addData(0x3000, b4)
+	}
+
+	def configReg(reg: Int, ena: Boolean) {
+		val enaConf = "c16a59e3".fromHex
+		val disConf = Seq.fill(4)(0.toByte)
+
+		if(ena) addData((0x7000 + reg * 32).toShort, enaConf)
+		else addData((0x7000 + reg * 32).toShort, disConf)
+	}
+
+	/** reverse bits in each byte */
+	def addReverse(dat: Seq[Byte]) {
+		buffer ++= dat.map { byte =>
+			var p = byte.toInt
+			p = ((p & 0xaa) >> 1) | ((p & 0x55) << 1)
+			p = ((p & 0xcc) >> 2) | ((p & 0x33) << 2)
+			p = ((p & 0xf0) >> 4) | ((p & 0x0f) << 4)
+
+			p.toByte
+		}
+	}
+
+	def setFreq(bits: Int) {
+		val freq = BigInt(1) << bits
+
+		val d = bintToBytes(freq - 1, 8).reverse
+
+		require(d.length == 8)
+
+		addData(0x6000, d)
 	}
 }

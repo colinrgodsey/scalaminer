@@ -182,20 +182,29 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 	}
 
 	//TODO: needs to watch for status 0x20
-	def spiSend(sendData: Seq[Byte])(then: => Unit) {
-		if(sendData.length != spiSettings.bpst) {
+	def spiSend(sendData: Seq[Byte])(after: Seq[Byte] => Unit) {
+		val isReset = if(sendData.length != spiSettings.bpst && !sendData.isEmpty) {
 			log.info("Setting new transfer length " + sendData.length)
 			setSettings(spiSettings.copy(bpst = sendData.length))
-		}
+			true
+		} else false
+
+		log.info("Sending " + sendData.toHex)
 
 		val out = ByteString(SPI_TRANSFER, sendData.length.toByte, 0, 0) ++
 				sendData ++ Array.fill(BUFFER_LENGTH - sendData.length - 4)(0.toByte)
 
 		require(out.length == BUFFER_LENGTH)
 
-		deviceRef ! Usb.SendBulkTransfer(intf, out.toSeq, SPI_TRANSFER)
+		//delay sending until transfer length set
+		if(!isReset)
+			deviceRef ! Usb.SendBulkTransfer(intf, out.toSeq, SPI_TRANSFER)
+
+		var buffer: Seq[Byte] = Nil
 
 		context.become(({
+			case Command(SET_SPI_SETTING, _) if isReset =>
+				deviceRef ! Usb.SendBulkTransfer(intf, out.toSeq, SPI_TRANSFER)
 			case Command(SPI_TRANSFER, dat) if dat.length >= 2 &&
 					dat(1) == SPI_TRANSFER_SUCCESS =>
 				val length = dat(2)
@@ -203,24 +212,30 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 
 				//log.info(s"Transfer completed with $status, length $length ")
 
-				val realDat = dat.slice(4, 4 + length)
+				buffer ++= dat.slice(4, 4 + length)
 
-				//log.info("transfer dat " + realDat.toString)
+				val realDat = buffer
+
+				log.info("transfer dat " + realDat.toHex)
 
 				if(status == 0x30)
 					sys.error("SPI expecting more data inappropriately")
 
-				if(status == 0x20) {
-					log.debug("spi transfer waiting....")
-					context.unbecome()
-					spiSend(sendData drop length)(then)
+				if(/*length != sendData.length*/status == 0x20) {
+					log.info("spi transfer waiting....")
+					//context.unbecome()
+					//unstashAll()
+					//spiSend(Nil/*endData drop length*/, realDat)(after)
+					sendCmd(SPI_TRANSFER)
 				}
 
 				if(status == 0x10) {
 					log.debug("spi transfer good.")
 					context.unbecome()
 					unstashAll()
-					then
+					after(realDat)
+					//TODO: fix this and add a sum
+					//require(realDat.length == dat.length, "Lost some SPI data")
 				}
 		}: Receive) orElse mcpReceive orElse {
 			case NonTerminated(_) => stash()
@@ -316,6 +331,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 
 		case Command(SPI_TRANSFER, dat) if dat.length >= 2 &&
 				dat(1) == SPI_TRANSFER_ERROR_IP =>
+			//TODO: this should do a retry and not just a flat out fail
 			sys.error("SPI transfer error in progress")
 		case Command(SPI_TRANSFER, dat) if dat.length >= 2 &&
 				dat(1) == SPI_TRANSFER_ERROR_NA =>

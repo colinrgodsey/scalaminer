@@ -213,7 +213,10 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			resetWorkTimer()
 			context stop self
 		case CheckInitTimeout =>
-			if(!finishedInit) sys.error("Init timeout!")
+			if(!finishedInit) {
+				log.error("Init timeout!")
+				context stop self
+			}
 		case Stratum.WorkAccepted =>
 			log.debug("Share accepted!")
 			self ! MinerMetrics.NonceAccepted

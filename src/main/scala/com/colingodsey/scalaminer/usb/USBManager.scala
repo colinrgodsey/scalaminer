@@ -80,7 +80,7 @@ object UsbDeviceManager {
 	case class AddDriver(driver: USBDeviceDriver) extends Command
 	case class AddStratumRef(typ: ScalaMiner.HashType, stratumRef: ActorRef) extends Command
 
-	case class FailedIdentify(ref: ActorRef, identity: USBIdentity) extends Command
+	case class FailedIdentify(deviceId: Usb.DeviceId, identity: USBIdentity) extends Command
 
 	case object IdentityReset extends Command
 
@@ -146,15 +146,13 @@ class UsbDeviceManager(config: Config)
 			self ! PollDevices
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
 		case AddDriver(drv) => usbDrivers += drv
-		case FailedIdentify(ref, identity) =>
-			log.info(s"$ref failed identity $identity")
+		case FailedIdentify(id, identity) =>
+			log.info(s"$id failed identity $identity")
 
-			workerMap.filter(_._2 == ref).map(_._1).headOption.foreach { dev =>
-				val s = failedIdentityMap.getOrElse(dev, Set.empty)
-				failedIdentityMap += dev -> (s + identity)
-			}
+			val s = failedIdentityMap.getOrElse(id, Set.empty)
+			failedIdentityMap += id -> (s + identity)
 
-			self ! PollDevices
+			maybePoll()
 		case Terminated(x) =>
 			context.system.scheduler.scheduleOnce(500.millis, self, RemoveRef(x))
 		case RemoveRef(x) =>
@@ -164,7 +162,7 @@ class UsbDeviceManager(config: Config)
 
 			log.warning(s"$x died! Removing ${filtered.size} devices.")
 
-			self ! PollDevices
+			maybePoll()
 		//got an identity and a device ref
 		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
 			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
@@ -183,7 +181,7 @@ class UsbDeviceManager(config: Config)
 
 			log.debug("Device connected " + id)
 
-			self ! PollDevices
+			maybePoll()
 		case Usb.DeviceDisconnected(id) =>
 			devices -= id
 
@@ -202,6 +200,7 @@ class UsbDeviceManager(config: Config)
 				identity <- driver.identities
 				if !failedSet(identity)
 				if identity matches id
+				_ = log.info(s"maybe $identity for $id")
 				if stratumEndpoints contains driver.hashType
 			} yield id -> identity
 

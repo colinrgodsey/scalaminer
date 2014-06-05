@@ -252,7 +252,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	val latency = 2.millis
 	val freq = 200000
 	val identity = BitFury.BXM
-	val nChips = 2
+	val nChips = 1//2
 	val bxmBits = 54
 	//TODO: im guessing this can be set by stratum
 	val rollLimit = 60.seconds
@@ -640,7 +640,7 @@ case object BitFury extends USBDeviceDriver {
 	def noncesFromResponse(nonceInts: Seq[Int]): Seq[Long] = {
 
 		nonceInts flatMap { nonceInt =>
-			var in = nonceInt.toLong & 0xFFFFFFFF.toLong
+			var in = nonceInt & 0xFFFFFFFFL
 			var out = (in & 0xFF) << 24
 
 			/* First part load */
@@ -660,10 +660,10 @@ case object BitFury extends USBDeviceDriver {
 				out |= (1 << 22)
 
 			//intToBytes(out - 0x800004).reverse
-			val nonce = out - 0x800004
+			val nonce = out - 0x800004L
 
 			if(nonceInt != -1)
-				Seq(nonce - 0x800000, nonce, nonce - 0x400000)
+				Seq(nonce - 0x800000L, nonce, nonce - 0x400000L)
 			else Nil
 		}
 	}

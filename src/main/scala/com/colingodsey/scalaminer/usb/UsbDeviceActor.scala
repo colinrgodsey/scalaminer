@@ -88,9 +88,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def failDetect() {
 		log.info("Failed detection for " + identity)
-		context.parent ! UsbDeviceManager.FailedIdentify(self, identity)
-		//context stop self
-		self ! PoisonPill
+		context.parent ! UsbDeviceManager.FailedIdentify(deviceId, identity)
+		context stop self
 	}
 
 	abstract override def preStart() {
@@ -102,7 +101,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	abstract override def postStop() {
 		super.postStop()
 
-		context stop deviceRef
+		//context stop deviceRef
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

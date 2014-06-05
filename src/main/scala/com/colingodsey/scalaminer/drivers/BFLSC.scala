@@ -292,7 +292,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
 		deviceRef ! lastPurgeIrp.send
 
-		context become (responseReceive orElse {
+		context become (workReceive orElse responseReceive orElse {
 			case GetResults =>
 			case Usb.ControlIrpResponse(`lastPurgeIrp`, _) =>
 				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp)

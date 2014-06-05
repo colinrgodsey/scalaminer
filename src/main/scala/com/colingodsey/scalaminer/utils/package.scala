@@ -33,9 +33,9 @@ package object utils {
 		//val bs = BigInt(x).toByteArray
 		//Seq.fill[Byte](4 - bs.length)(0) ++ bs
 
-		Vector(((x >> 24) & 0xFF).toByte,
-			((x >> 16) & 0xFF).toByte,
-			((x >> 8 ) & 0xFF).toByte,
+		Vector(((x >>> 24) & 0xFF).toByte,
+			((x >>> 16) & 0xFF).toByte,
+			((x >>> 8 ) & 0xFF).toByte,
 			((x      ) & 0xFF).toByte)
 	}
 
@@ -108,7 +108,7 @@ package object utils {
 
 		while(itr.hasNext) {
 			val byte = itr.next
-			val n1 = (byte >> 4) & 0xF
+			val n1 = (byte >>> 4) & 0xF
 			val n2 = byte & 0xF
 
 			builder += hexDigits(n1)

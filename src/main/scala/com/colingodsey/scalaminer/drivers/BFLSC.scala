@@ -407,6 +407,8 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	}
 
 	override def postStop() {
+		super.postStop()
+		
 		pollTimer.cancel()
 		jobTimeoutTimer.cancel()
 	}

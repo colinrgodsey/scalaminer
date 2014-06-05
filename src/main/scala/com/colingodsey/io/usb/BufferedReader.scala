@@ -50,7 +50,12 @@ trait BufferedReader extends Actor with ActorLogging{
 	def interfaceReadBuffer(x: Interface) =
 		interfaceReadBuffers.getOrElse(x, ByteString.empty)
 
-	def dropBuffer(interface: Interface, len: Int) = {
+	def dropBuffer(interface: Interface): Int = {
+		val preBuf = interfaceReadBuffer(interface)
+		dropBuffer(interface, preBuf.length)
+	}
+
+	def dropBuffer(interface: Interface, len: Int): Int = {
 		val preBuf = interfaceReadBuffer(interface)
 		val dropped = math.min(len, preBuf.length)
 		interfaceReadBuffers += interface -> preBuf.drop(dropped)

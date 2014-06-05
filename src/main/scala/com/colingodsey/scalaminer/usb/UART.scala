@@ -69,7 +69,6 @@ case object FTDI {
 	val VALUE_MODEM_BITMODE = 0x00FF.toShort
 	val INTERFACE_A = 0x0.toByte
 	val INTERFACE_B = 0x1.toByte
-	val SIO_SET_BITMODE_REQUEST = 0x0B.toByte
 	val INTERFACE_A_IN_EP =  0x02.toByte
 	val INTERFACE_A_OUT_EP = 0x81.toByte
 	val INTERFACE_B_IN_EP =  0x04.toByte
@@ -86,10 +85,43 @@ case object FTDI {
 	val SIO_SET_DTR_LOW  = ( 0 | ( SIO_SET_DTR_MASK << 8)).toShort
 	val SIO_SET_RTS_HIGH = ( 2 | ( SIO_SET_RTS_MASK << 8)).toShort
 	val SIO_SET_RTS_LOW  = ( 0 | ( SIO_SET_RTS_MASK << 8)).toShort
-
+	val SIO_RESET_REQUEST = 0.toByte
+	val SIO_SET_LATENCY_TIMER_REQUEST = 0x09.toByte
+	val SIO_SET_EVENT_CHAR_REQUEST    = 0x06.toByte
+	val SIO_SET_ERROR_CHAR_REQUEST    = 0x07.toByte
+	val SIO_SET_BITMODE_REQUEST       = 0x0B.toByte
+	val SIO_RESET_PURGE_RX            = 1.toByte
+	val SIO_RESET_PURGE_TX            = 2.toByte
+	val SIO_RESET_SIO                 = 0.toByte
 	val SIO_POLL_MODEM_STATUS_REQUEST = 0x05.toByte
-	val SIO_SET_MODEM_CTRL_REQUEST = 0x01.toByte
+	val SIO_SET_MODEM_CTRL_REQUEST    = 0x01.toByte
+
+	val BITMODE_RESET = 0x00.toByte
+	val BITMODE_MPSSE = 0x02.toByte
+
 	val MODEM_CTS = (1 << 4)
+
+	//MPSSE commands from FTDI AN_108
+	val INVALID_COMMAND           = 0xAB.toByte
+	val ENABLE_ADAPTIVE_CLOCK     = 0x96.toByte
+	val DISABLE_ADAPTIVE_CLOCK    = 0x97.toByte
+	val ENABLE_3_PHASE_CLOCK      = 0x8C.toByte
+	val DISABLE_3_PHASE_CLOCK     = 0x8D.toByte
+	val TCK_X5                    = 0x8A.toByte
+	val TCK_D5                    = 0x8B.toByte
+	val CLOCK_N_CYCLES            = 0x8E.toByte
+	val CLOCK_N8_CYCLES           = 0x8F.toByte
+	val PULSE_CLOCK_IO_HIGH       = 0x94.toByte
+	val PULSE_CLOCK_IO_LOW        = 0x95.toByte
+	val CLOCK_N8_CYCLES_IO_HIGH   = 0x9C.toByte
+	val CLOCK_N8_CYCLES_IO_LOW    = 0x9D.toByte
+	val TRISTATE_IO               = 0x9E.toByte
+	val TCK_DIVISOR               = 0x86.toByte
+	val LOOPBACK_END              = 0x85.toByte
+	val SET_OUT_ADBUS             = 0x80.toByte
+	val SET_OUT_ACBUS             = 0x82.toByte
+	val WRITE_BYTES_SPI0          = 0x11.toByte
+	val READ_WRITE_BYTES_SPI0     = 0x31.toByte
 
 	val vendor = 0x0403.toShort
 }
@@ -174,8 +206,8 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 		dat(14) = pinValue(8)
 		dat(16) = pinDirection(8)
 
-		log.info("Set pin values " + pinValue)
-
+		log.debug("Set pin values " + pinValue)
+		//log.info("Sending " + dat.toHex)
 		deviceRef ! Usb.SendBulkTransfer(intf, dat.toSeq, SET_GPIO_SETTING)
 
 		startRead()
@@ -184,12 +216,12 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 	//TODO: needs to watch for status 0x20
 	def spiSend(sendData: Seq[Byte])(after: Seq[Byte] => Unit) {
 		val isReset = if(sendData.length != spiSettings.bpst && !sendData.isEmpty) {
-			log.info("Setting new transfer length " + sendData.length)
+			//log.info("Setting new transfer length " + sendData.length)
 			setSettings(spiSettings.copy(bpst = sendData.length))
 			true
 		} else false
 
-		log.info("Sending " + sendData.toHex)
+		//log.info("Sending " + sendData.toHex)
 
 		val out = ByteString(SPI_TRANSFER, sendData.length.toByte, 0, 0) ++
 				sendData ++ Array.fill(BUFFER_LENGTH - sendData.length - 4)(0.toByte)
@@ -216,13 +248,13 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 
 				val realDat = buffer
 
-				log.info("transfer dat " + realDat.toHex)
+				//log.info("transfer dat " + realDat.toHex)
 
 				if(status == 0x30)
 					sys.error("SPI expecting more data inappropriately")
 
 				if(/*length != sendData.length*/status == 0x20) {
-					log.info("spi transfer waiting....")
+					//log.info("spi transfer waiting....")
 					//context.unbecome()
 					//unstashAll()
 					//spiSend(Nil/*endData drop length*/, realDat)(after)
@@ -230,7 +262,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 				}
 
 				if(status == 0x10) {
-					log.debug("spi transfer good.")
+					//log.debug("spi transfer good.")
 					context.unbecome()
 					unstashAll()
 					after(realDat)
@@ -284,7 +316,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 
 		deviceRef ! Usb.SendBulkTransfer(intf, buf.toSeq, SET_SPI_SETTING)
 
-		log.debug("Set settings")
+		//log.info("Set settings " + buf.toHex)
 	}
 
 	def mcpReceive: Receive = usbBufferReceive orElse {
@@ -299,7 +331,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 			}
 
 		case Command(GET_GPIO_PIN_VAL, dat0) =>
-			log.info("pin val " + dat0)
+			//log.info("pin val " + dat0)
 			val dat = dat0.toIndexedSeq
 
 			for(i <- 0 until 8) {
@@ -308,7 +340,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 			}
 			pinValue = pinValue.updated(8, (dat(5) & 1).toByte)
 
-			log.info("Pin values " + pinValue)
+			log.debug("Pin values " + pinValue)
 
 			self ! GotPins
 
@@ -326,7 +358,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 				spiMode = buf(20)
 			)
 
-			log.info("SPI Settings " + spiSettings)
+			log.debug("SPI Settings " + spiSettings)
 			self ! GotSettings
 
 		case Command(SPI_TRANSFER, dat) if dat.length >= 2 &&
@@ -347,7 +379,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 			require(dat.length == 64)
 
 			settingsBytes = dat
-			log.info("buf17 = " + dat(17))
+			//log.info("buf17 = " + dat(17))
 
 			val designationB = for(i <- 0 until 8) yield dat(4 + i)
 			val valueB = for(i <- 0 until 8)
@@ -361,7 +393,7 @@ trait MCP2210Actor extends Actor with UsbDeviceActor with BufferedReader {
 
 			require(pinDesignation.length == 9)
 
-			log.info("Pin values " + pinValue)
+			//log.info("Pin values " + pinValue)
 
 			self ! GotPins
 	}

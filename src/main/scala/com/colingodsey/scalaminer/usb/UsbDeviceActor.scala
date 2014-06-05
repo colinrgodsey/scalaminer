@@ -88,8 +88,9 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def failDetect() {
 		log.info("Failed detection for " + identity)
-		context stop self
 		context.parent ! UsbDeviceManager.FailedIdentify(self, identity)
+		//context stop self
+		self ! PoisonPill
 	}
 
 	abstract override def preStart() {

@@ -19,6 +19,7 @@ import java.io.{File, ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.usb._
+import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.drivers._
 import akka.io.{ IO, Tcp }
 import com.colingodsey.scalaminer.network.Stratum.StratumConnection
@@ -129,6 +130,20 @@ object ScalaMinerMain extends App {
 		system.awaitTermination(15.seconds)
 		println("Shut down")
 	}
+
+	val fs = for(i <- 0 until 150) yield {
+		val f = 225 + 25 * i
+		val clamped = Icarus.getAntMinerFreq(f).toInt
+
+		val cmdBufPre = Vector[Int](2 | 0x80, (clamped & 0xff00) >> 8,
+			clamped & 0x00ff).map(_.toByte)
+		//val hex = cmdBufPre.toHex
+		val hex = intToBytes(clamped).toHex
+
+		s"${f}, $hex"
+	}
+
+	//println(fs.mkString("\n"))
 }
 
 object MinerDriver {

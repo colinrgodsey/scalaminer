@@ -4,9 +4,6 @@ import org.scalatest._
 import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.utils._
 
-/**
- * Created by crgodsey on 4/8/14.
- */
 class BlockHeaderSuite extends FlatSpec {
 
 	import com.colingodsey.scalaminer.hashing.Hashing._

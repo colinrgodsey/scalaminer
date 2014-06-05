@@ -502,8 +502,6 @@ case object BFLSC extends USBDeviceDriver {
 		def config = 1
 		def timeout = bflTimeout
 
-		def isMultiCoin = true
-
 		val interfaces = Set(Usb.Interface(0, Set(
 			Usb.InputEndpoint(64, 1, 0),
 			Usb.OutputEndpoint(64, 2, 0)
@@ -522,8 +520,6 @@ case object BFLSC extends USBDeviceDriver {
 		def iProduct = "BitFORCE SHA256"
 		def config = 1
 		def timeout = bflTimeout
-
-		def isMultiCoin = true
 
 		val interfaces = Set(Usb.Interface(0, Set(
 			Usb.InputEndpoint(64, 1, 0),

@@ -299,9 +299,10 @@ case object Icarus extends USBDeviceDriver {
 		val goldenNonce = "000187a2".fromHex
 	}
 
-	def getAntMinerFreq(freq: Double) = {
-		var bestDiff = 1000.0
+	def getAntMinerFreq(freq: Float) = {
+		var bestDiff = 1000.0f
 		var bestOut = freq
+		var bestFreq: Int = -1
 		var exactFound = false
 
 		for {
@@ -311,22 +312,23 @@ case object Icarus extends USBDeviceDriver {
 			nr = n + 1
 			m <- 0 until 64
 			nf = m + 1
-			fout = 25.0 * nf / (nr * no)
-			if math.abs(fout - freq) <= bestDiff
+			fout = 25.0f * nf / (nr * no)
+			diff = math.abs(fout - freq)
+			if diff < bestDiff
 			if !exactFound
+			bs = if(500 <= (fout * no) && (fout * no) <= 1000) 1 else 0
+			realVal = (bs << 14) | (m << 7) | (n << 2) | od
 		} {
-			val bs = if(500 <= (fout * no) && (fout * no) <= 1000) 1 else 0
-			bestDiff = math.abs(fout - freq)
+			bestDiff = diff
 			bestOut = fout
+			bestFreq = realVal
 
-			val freqVal = (bs << 14) | (m << 7) | (n << 2) | od;
-
-			if(freqVal == fout) {
+			if(freq == fout) {
 				exactFound = true
 				bestOut = fout
 			}
 		}
 
-		bestOut
+		bestFreq
 	}
 }

@@ -48,6 +48,9 @@ object AbstractMiner {
 	case object StatSubscribe extends Command
 	case object WorkTimeout extends Command
 
+	case object ValidShareProcessed extends Command
+
+	//TODO: self can be implicit, like tell...
 	def submitNonce(n: Nonce, job: Stratum.MiningJob, diff: Int,
 			target: Seq[Byte], strat: ActorRef, isScrypt: Boolean,
 			self: ActorRef, log: LoggingAdapter, difMask: BigInt) {
@@ -66,6 +69,16 @@ object AbstractMiner {
 		/*val hashes = if(isScrypt) hashesForDiffScrypt(1)
 		else hashesForDiffSHA256(1)
 		self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)*/
+log.info("Hash " + hashBin.reverse.toHex)
+
+		//TODO: diff 1 hash rate, or target rate?
+		if(hashInt < (difMask)) {
+			val hashes = if(isScrypt) hashesForDiffScrypt(1)
+			else hashesForDiffSHA256(1)
+			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+
+			self ! ValidShareProcessed
+		}
 
 		if(getInts(nonce).head == -1) {
 			log.error("Nonce error!")
@@ -78,8 +91,8 @@ object AbstractMiner {
 		} else {
 			val hashes = if(isScrypt) hashesForDiffScrypt(diff)
 			else hashesForDiffSHA256(diff)
-			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
-
+			//self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+			//log.info("Good hash " + hashBin.reverse.toHex)
 			log.info("Submitting " + hashBin.toHex + " nonce " + nonce.toList)
 
 			val ntimepos = 17 * 4 // 17th integer in datastring
@@ -194,9 +207,11 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def workReceive: Receive = {
 		case AbstractMiner.WorkTimeout =>
-			log.debug("Nonce timeout! Restarting work...")
+			//log.debug("Nonce timeout! Restarting work...")
+			log.error("Nonce error! Killing....")
 			self ! AbstractMiner.CancelWork
 			resetWorkTimer()
+			context stop self
 		case CheckInitTimeout =>
 			if(!finishedInit) sys.error("Init timeout!")
 		case Stratum.WorkAccepted =>

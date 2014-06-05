@@ -147,6 +147,8 @@ class UsbDeviceManager(config: Config)
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
 		case AddDriver(drv) => usbDrivers += drv
 		case FailedIdentify(ref, identity) =>
+			log.info(s"$ref failed identity $identity")
+
 			workerMap.filter(_._2 == ref).map(_._1).headOption.foreach { dev =>
 				val s = failedIdentityMap.getOrElse(dev, Set.empty)
 				failedIdentityMap += dev -> (s + identity)

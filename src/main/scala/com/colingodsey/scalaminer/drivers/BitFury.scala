@@ -252,7 +252,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	val latency = 2.millis
 	val freq = 200000
 	val identity = BitFury.BXM
-	val nChips = 1//2
+	val nChips = 2
 	val bxmBits = 54
 	//TODO: im guessing this can be set by stratum
 	val rollLimit = 60.seconds

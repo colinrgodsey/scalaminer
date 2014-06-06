@@ -456,7 +456,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 
 	def hashType = ScalaMiner.SHA256
 
-	def jobDelay = 20.millis
+	def jobDelay = 30.millis
 
 	//var jobByChip: Map[Int, Stratum.Job] = Map.empty
 	var workSendingToChip = Set.empty[Int]
@@ -500,10 +500,10 @@ trait BitFury extends BufferedReader with AbstractMiner {
 			if(!opt.isDefined) log.info("No work yet")
 
 			opt foreach { job =>
-				bfSendJob(chip, job)
 				chipNextWork += chip -> job
 				if(!chipCurrentWork.contains(chip))
 					chipCurrentWork += chip -> job
+				bfSendJob(chip, job)
 			}
 		} else bfSendJob(chip, chipNextWork(chip))
 	}
@@ -545,9 +545,9 @@ trait BitFury extends BufferedReader with AbstractMiner {
 	}
 
 	def bitFuryReceive: Receive = {
-		case AbstractMiner.ValidShareProcessed =>
+		/*case AbstractMiner.ValidShareProcessed =>
 			chipNextWork = Map.empty
-			for(i <- 0 until nChips) self ! BitFury.SendWork(i)
+			for(i <- 0 until nChips) self ! BitFury.SendWork(i)*/
 		case BitFury.ClearWork =>
 			chipNextWork = Map.empty
 			for(i <- 0 until nChips) self ! BitFury.SendWork(i)

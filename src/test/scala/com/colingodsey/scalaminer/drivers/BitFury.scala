@@ -28,6 +28,14 @@ class BitFurySuite extends FlatSpec {
 	val preNonce = 803581253
 	val postNonce = 1161636329
 
+	val res2 = "3b7951f0186f3ec050ce790bf1f119c8e019902877dda58114c9bca575a758a3434822db4ba028a984466c23facd1a3ecbe6a9b476c49e7c50d9945d50d9945dffffffff".fromHex
+	val postNonce2 = -544931230
+
+	val res3 = "73627dee92a3ba22e689ac6bcd15cd56c473d6414a3750858b35ba6d70d3b1f4d2a82e81b7b730a533532b6ff3c3789c6d2e6b02cdf35e66554aaabbe01dc380ffffffff".fromHex
+	val preNonce3 = -2134696480
+	val postNonce3 = -545230614
+	val postNonceSet3 = Set[Int](-849764689, 1425495376, postNonce3)
+
 	"A payload" should "be generated from work" in {
 		val testWork = Work(ScalaMiner.SHA256, testData, midstate, Nil)
 
@@ -42,9 +50,27 @@ class BitFurySuite extends FlatSpec {
 		require(nonceInts(preNonce), nonceInts + " doesnt contain " + preNonce)
 	}
 
+	it should "parse the pre nonce response3" in {
+		val nonceInts = getInts(res3.reverseEndian).toSet
+
+		require(nonceInts(preNonce3), nonceInts + " doesnt contain " + preNonce3)
+	}
+
 	it should "parse the post nonce response" in {
-		val nonces = BitFury.noncesFromResponseBytes(res).map(_.toInt).toSet
+		val nonces = BitFury.noncesFromResponseBytes(res)/*.map(_.toInt)*/.toSet
 
 		require(nonces(postNonce), nonces + " doesnt contain " + postNonce)
+	}
+
+	it should "parse the post nonce response2" in {
+		val nonces = BitFury.noncesFromResponseBytes(res2)/*.map(_.toInt)*/.toSet
+
+		require(nonces(postNonce2), nonces + " doesnt contain " + postNonce2)
+	}
+
+	it should "parse the post nonce response3" in {
+		val nonces = BitFury.noncesFromResponseBytes(res3)/*.map(_.toInt)*/.toSet
+
+		require((postNonceSet3 -- nonces).isEmpty, nonces + " doesnt contain " + postNonceSet3)
 	}
 }

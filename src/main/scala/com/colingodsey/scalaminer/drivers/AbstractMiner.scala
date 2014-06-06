@@ -156,7 +156,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def failDetect()
 
-	def detectTimeout = 6.seconds
+	def detectTimeout = 10.seconds
 
 	def stratumRef = workRefs(if(isScrypt) ScalaMiner.Scrypt else ScalaMiner.SHA256)
 

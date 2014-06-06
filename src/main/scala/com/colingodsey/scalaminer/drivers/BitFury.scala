@@ -255,13 +255,13 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	val nChips = 2
 	val bxmBits = 54
 	//TODO: im guessing this can be set by stratum
-	val rollLimit = 60.seconds
+	//val rollLimit = 60.seconds
 	val transferTimeout = 2.seconds
 
 	val readDelay: FiniteDuration = 2.millis
 	val isFTDI: Boolean = true
 	val readSize: Int = 512
-	val nonceTimeout: FiniteDuration = 8.seconds
+	val nonceTimeout: FiniteDuration = 5.seconds
 
 	val TWELVE_MHZ = 12000000
 
@@ -346,13 +346,15 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 
 					if(buf.length >= dat0.length) {
 						//TODO: drop all, or just what we took?
-						dropBuffer(intf, dat0.length)
-						//dropBuffer(intf)
+						//dropBuffer(intf, dat0.length)
+						dropBuffer(intf)
 						unstashAll()
 						context.unbecome()
 						timeoutTimer.cancel()
 						after(buf take dat0.length)
 					}
+				//TODO: should probably be just one chip
+				case BitFury.SendWork(_) =>
 				case TimedOut =>
 					log.warning("Transfer timed out!")
 					context stop self
@@ -454,20 +456,23 @@ trait BitFury extends BufferedReader with AbstractMiner {
 
 	def hashType = ScalaMiner.SHA256
 
+	def jobDelay = 100.millis
+
 	//var jobByChip: Map[Int, Stratum.Job] = Map.empty
 	var workSendingToChip = Set.empty[Int]
 	var lastResPerChip: Map[Int, Seq[Int]] = Map.empty
-	var chipWork = Map[Int, Stratum.Job]()
+	var chipNextWork = Map[Int, Stratum.Job]()
+	var chipCurrentWork = Map[Int, Stratum.Job]()
 
 	def oldNonces(chip: Int) =
 		lastResPerChip.getOrElse(chip, Nil)
 
-	def bfSendJob(chip: Int, job: Stratum.Job) {
+	def bfSendJob(chip: Int, nextJob: Stratum.Job): Unit = if(!workSendingToChip(chip)) {
 		workSendingToChip += chip
 
 		val builder = new SPIDataBuilder
 
-		val payload = BitFury.genPayload(job.work)
+		val payload = BitFury.genPayload(nextJob.work)
 
 		self ! MinerMetrics.WorkStarted
 
@@ -478,27 +483,29 @@ trait BitFury extends BufferedReader with AbstractMiner {
 		log.info("Work sent to chip " + chip)
 
 		transfer(builder.results) { dat0 =>
-			val dat = dat0.drop(4 + chip).take(17 * 4)
+			val dat = dat0.drop(4 + chip).take(19 * 4)
 			//log.info("Work resp dat " + dat.toHex)
 
-			decNonces(dat, chip, job)
+			decNonces(dat, chip, chipCurrentWork(chip))
 
 			context.system.scheduler.scheduleOnce(
-				20.millis, self, BitFury.UnBusyChip(chip))
+				jobDelay, self, BitFury.UnBusyChip(chip))
 		}
 	}
 
 	def bfSendWork(chip: Int): Unit = if(!workSendingToChip(chip)) {
-		val opt = getWork(true)
+		if(!chipNextWork.contains(chip)) {
+			val opt = getWork(true)
 
-		if(chipWork contains chip) {
-			bfSendJob(chip, chipWork(chip))
-		} else opt foreach { job =>
-			bfSendJob(chip, job)
-			chipWork += chip -> job
-		}
+			if(!opt.isDefined) log.info("No work yet")
 
-		if(!opt.isDefined) log.info("No work yet")
+			opt foreach { job =>
+				bfSendJob(chip, job)
+				chipNextWork += chip -> job
+				if(!chipCurrentWork.contains(chip))
+					chipCurrentWork += chip -> job
+			}
+		} else bfSendJob(chip, chipNextWork(chip))
 	}
 
 	def decNonces(encNonce: Seq[Byte], chip: Int, job: Stratum.Job) {
@@ -512,7 +519,11 @@ trait BitFury extends BufferedReader with AbstractMiner {
 			old.length <= 16 || nonceInts.length <= 16 || old(16) != nonceInts(16)
 		}
 
-		if(workChanged) log.info("Work changed for chip " + chip)
+		if(workChanged) {
+			log.info("Work changed for chip " + chip)
+			chipCurrentWork += chip -> chipNextWork(chip)
+			chipNextWork -= chip
+		}
 
 		for {
 			//job <- jobByChip get chip
@@ -535,16 +546,16 @@ trait BitFury extends BufferedReader with AbstractMiner {
 
 	def bitFuryReceive: Receive = {
 		case AbstractMiner.ValidShareProcessed =>
-			chipWork = Map.empty
+			chipNextWork = Map.empty
 			for(i <- 0 until nChips) self ! BitFury.SendWork(i)
 		case BitFury.ClearWork =>
-			chipWork = Map.empty
+			chipNextWork = Map.empty
 			for(i <- 0 until nChips) self ! BitFury.SendWork(i)
 		case BitFury.UnBusyChip(chip) =>
 			workSendingToChip -= chip
 			self ! BitFury.SendWork(chip)
 		case AbstractMiner.CancelWork =>
-			chipWork = Map.empty
+			chipNextWork = Map.empty
 			for(i <- 0 until nChips) self ! BitFury.SendWork(i)
 		case BitFury.SendWork(chip) => bfSendWork(chip)
 	}
@@ -634,13 +645,26 @@ case object BitFury extends USBDeviceDriver {
 		//SPIDataBuilder.testVec
 	}
 
-	def noncesFromResponseBytes(encNonces: Seq[Byte]): Seq[Long] =
+	def noncesFromResponseBytes(encNonces: Seq[Byte]): Seq[Int] =
 		noncesFromResponse(getInts(encNonces.reverseEndian))
 
-	def noncesFromResponse(nonceInts: Seq[Int]): Seq[Long] = {
+	//a - b
+	def uIntSub(a: Int, b: Int) = {
+		val a1 = a & 0xFFFFFFFFL
+		val b1 = b & 0xFFFFFFFFL
+
+		(if(b == 0) a
+		else if(a1 < b1) a1 - b1 + 0xFFFFFFFFL
+		else a1 - b1).toInt
+	}
+
+	def noncesFromResponse(nonceInts: Seq[Int]): Seq[Int] = {
 
 		nonceInts flatMap { nonceInt =>
-			var in = nonceInt & 0xFFFFFFFFL
+			var in = nonceInt
+
+			//require(in >= 0)
+
 			var out = (in & 0xFF) << 24
 
 			/* First part load */
@@ -660,10 +684,10 @@ case object BitFury extends USBDeviceDriver {
 				out |= (1 << 22)
 
 			//intToBytes(out - 0x800004).reverse
-			val nonce = out - 0x800004L
+			val nonce = uIntSub(out, 0x800004)
 
 			if(nonceInt != -1)
-				Seq(nonce - 0x800000L, nonce, nonce - 0x400000L)
+				Seq(0x800000, 0, 0x400000).map(nonce - _)
 			else Nil
 		}
 	}
@@ -728,7 +752,7 @@ class SPIDataBuilder {
 
 		buffer ++= Seq[Byte](
 			((len / 4 - 1) | 0xE0).toByte,
-			((addr >> 8) & 0xFF).toByte,
+			((addr >>> 8) & 0xFF).toByte,
 			(addr & 0xFF).toByte
 		)
 
@@ -803,9 +827,9 @@ class SPIDataBuilder {
 	def addReverse(dat: Seq[Byte]) {
 		buffer ++= dat.map { byte =>
 			var p = byte.toInt
-			p = ((p & 0xaa) >> 1) | ((p & 0x55) << 1)
-			p = ((p & 0xcc) >> 2) | ((p & 0x33) << 2)
-			p = ((p & 0xf0) >> 4) | ((p & 0x0f) << 4)
+			p = ((p & 0xaa) >>> 1) | ((p & 0x55) << 1)
+			p = ((p & 0xcc) >>> 2) | ((p & 0x33) << 2)
+			p = ((p & 0xf0) >>> 4) | ((p & 0x0f) << 4)
 
 			p.toByte
 		}

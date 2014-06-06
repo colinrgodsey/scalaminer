@@ -49,6 +49,9 @@ http://blockexplorer.com/block/000000000019d6689c085ae165831e934ff763ae46a2a6c17
 
 		require((-1 & 0xFFFFFFFFL) > 0)
 		require(0xFFFFFFFFL > 0)
+
+		//simulate unsigned integer math when going negative
+		require(((0L - 1L) & 0xFFFFFFFFL) == 0xFFFFFFFFL)
 	}
 
 	//http://stackoverflow.com/questions/9245235/golang-midstate-sha-256-hash

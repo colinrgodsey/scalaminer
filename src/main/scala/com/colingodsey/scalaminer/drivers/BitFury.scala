@@ -24,7 +24,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 
 	def readDelay = 2.millis
 	def readSize = 64
-	def nonceTimeout = 10.seconds
+	def nonceTimeout = 15.seconds
 	def identity = BitFury.NFU
 
 	var sckPinStage = 0
@@ -256,12 +256,12 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	val bxmBits = 54
 	//TODO: im guessing this can be set by stratum
 	//val rollLimit = 60.seconds
-	val transferTimeout = 2.seconds
+	val transferTimeout = 5.seconds
 
 	val readDelay: FiniteDuration = 2.millis
 	val isFTDI: Boolean = true
 	val readSize: Int = 512
-	val nonceTimeout: FiniteDuration = 5.seconds
+	val nonceTimeout: FiniteDuration = 15.seconds
 
 	val TWELVE_MHZ = 12000000
 
@@ -456,7 +456,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 
 	def hashType = ScalaMiner.SHA256
 
-	def jobDelay = 100.millis
+	def jobDelay = 20.millis
 
 	//var jobByChip: Map[Int, Stratum.Job] = Map.empty
 	var workSendingToChip = Set.empty[Int]
@@ -513,7 +513,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 		val old = oldNonces(chip)
 		val oldNonceSet = old.toSet
 		val newNonceInts = nonceInts.filter(!oldNonceSet(_))
-		val nonces = BitFury.noncesFromResponse(newNonceInts).map(_.toInt)
+		val nonces = BitFury.noncesFromResponse(newNonceInts)
 
 		val workChanged = {
 			old.length <= 16 || nonceInts.length <= 16 || old(16) != nonceInts(16)
@@ -684,10 +684,11 @@ case object BitFury extends USBDeviceDriver {
 				out |= (1 << 22)
 
 			//intToBytes(out - 0x800004).reverse
-			val nonce = uIntSub(out, 0x800004)
+			val nonce = out - 0x800004//uIntSub(out, 0x800004)
 
 			if(nonceInt != -1)
 				Seq(0x800000, 0, 0x400000).map(nonce - _)
+				//Seq(0x800000, 0, 0x400000).map(uIntSub(nonce, _))
 			else Nil
 		}
 	}

@@ -22,15 +22,15 @@ import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.drivers._
 import akka.io.{ IO, Tcp }
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
-import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
+import com.colingodsey.scalaminer.network.Stratum.Connection
+import com.colingodsey.scalaminer.network.{StratumPool, Stratum, StratumProxy, StratumActor}
 import spray.can.Http
 import akka.util.{Timeout, ByteString}
 import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsActor}
 import com.typesafe.config.{Config, ConfigFactory}
 import java.util.concurrent._
 import java.util
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
+import com.colingodsey.scalaminer.network.Stratum.Connection
 import scala.Some
 import com.colingodsey.scalaminer.Work
 import scala.concurrent.duration.TimeUnit
@@ -38,7 +38,7 @@ import scala.util.{Failure, Success}
 import scala.concurrent.Await
 import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.api.CGMinerAPI
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
+import com.colingodsey.scalaminer.network.Stratum.Connection
 import scala.Some
 import com.colingodsey.scalaminer.Work
 
@@ -69,7 +69,7 @@ object ScalaMinerMain extends App {
 
 	def readStConn(cfg: Config) = {
 		if(cfg.hasPath("host")) {
-			StratumConnection(cfg getString "host", cfg getInt "port",
+			Connection(cfg getString "host", cfg getInt "port",
 				cfg getString "user", cfg getString "pass")
 		} else ??? //TODO: implement parsing for multiple stratums
 	}
@@ -96,8 +96,10 @@ object ScalaMinerMain extends App {
 
 	if(smConfig.hasPath("stratum.scrypt")) {
 		val conn = readStConn(smConfig getConfig "stratum.scrypt")
-		val connRef = system.actorOf(Props(classOf[StratumActor],
-			conn, ScalaMiner.Scrypt), name = "stratum-scrypt")
+		val connRef = system.actorOf(Props(classOf[StratumPool],
+			ScalaMiner.Scrypt), name = "stratum-scrypt")
+
+		connRef ! StratumPool.AddConnection(conn)
 
 		if(usbDeviceManager.isDefined)
 			usbDeviceManager.get ! UsbDeviceManager.AddStratumRef(ScalaMiner.Scrypt, connRef)
@@ -105,8 +107,10 @@ object ScalaMinerMain extends App {
 
 	if(smConfig.hasPath("stratum.sha256")) {
 		val conn = readStConn(smConfig getConfig "stratum.sha256")
-		val connRef = system.actorOf(Props(classOf[StratumActor],
-			conn, ScalaMiner.SHA256), name = "stratum-sha256")
+		val connRef = system.actorOf(Props(classOf[StratumPool],
+			ScalaMiner.SHA256), name = "stratum-sha256")
+
+		connRef ! StratumPool.AddConnection(conn)
 
 		if(usbDeviceManager.isDefined)
 			usbDeviceManager.get ! UsbDeviceManager.AddStratumRef(ScalaMiner.SHA256, connRef)

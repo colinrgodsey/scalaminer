@@ -22,7 +22,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 	val nfuBits = 50 // ?? also seen 30?
 	val nChips = 1
 
-	def readDelay = 2.millis
+	def readDelay = 4.millis
 	def readSize = 64
 	def nonceTimeout = 15.seconds
 	def identity = BitFury.NFU
@@ -258,7 +258,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	//val rollLimit = 60.seconds
 	val transferTimeout = 5.seconds
 
-	val readDelay: FiniteDuration = 2.millis
+	val readDelay: FiniteDuration = latency * 2
 	val isFTDI: Boolean = true
 	val readSize: Int = 512
 	val nonceTimeout: FiniteDuration = 15.seconds
@@ -456,7 +456,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 
 	def hashType = ScalaMiner.SHA256
 
-	def jobDelay = 30.millis
+	def jobDelay = 100.millis
 
 	//var jobByChip: Map[Int, Stratum.Job] = Map.empty
 	var workSendingToChip = Set.empty[Int]
@@ -480,7 +480,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 		builder.addFASync(chip)
 		builder.addData(0x3000, payload.view.take(76))
 
-		log.info("Work sent to chip " + chip)
+		log.debug("Work sent to chip " + chip)
 
 		transfer(builder.results) { dat0 =>
 			val dat = dat0.drop(4 + chip).take(19 * 4)
@@ -520,7 +520,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 		}
 
 		if(workChanged) {
-			log.info("Work changed for chip " + chip)
+			log.debug("Work changed for chip " + chip)
 			chipCurrentWork += chip -> chipNextWork(chip)
 			chipNextWork -= chip
 		}

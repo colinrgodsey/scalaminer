@@ -69,7 +69,7 @@ object AbstractMiner {
 		/*val hashes = if(isScrypt) hashesForDiffScrypt(1)
 		else hashesForDiffSHA256(1)
 		self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)*/
-log.info("Hash " + hashBin.reverse.toHex)
+		//log.info("Hash " + hashBin.reverse.toHex)
 
 		//TODO: diff 1 hash rate, or target rate?
 		if(hashInt < (difMask)) {
@@ -107,7 +107,7 @@ log.info("Hash " + hashBin.reverse.toHex)
 				nonceRead.toHex.toJson)
 
 			self ! MinerMetrics.NonceSubmitted
-			strat.tell(Stratum.SubmitStratumJob(params), self)
+			strat.tell(Stratum.SubmitStratumJob(params, job), self)
 			//log.info("submitting.... to " + stratumRef)
 		}
 
@@ -236,7 +236,9 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 			log.info("New target " + targetBytes.map(
 				"%02x" format _).mkString + " diff " + difficulty)
-		case x: Stratum.ExtraNonce => extraNonceInfo = Some(x)
+		case x: Stratum.ExtraNonce =>
+			extraNonceInfo = Some(x)
+			self ! AbstractMiner.CancelWork
 		case x: MiningJob =>
 			miningJob = Some(x)
 			self ! AbstractMiner.CancelWork

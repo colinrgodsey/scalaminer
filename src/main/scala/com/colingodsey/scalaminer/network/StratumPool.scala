@@ -30,6 +30,8 @@ object StratumPool {
 	sealed trait Command
 
 	case class AddConnection(con: Stratum.Connection)
+
+	case object MaybeChangeConnection extends Command
 }
 
 class StratumPool(hashType: ScalaMiner.HashType)
@@ -63,6 +65,8 @@ class StratumPool(hashType: ScalaMiner.HashType)
 
 	def canRetry(con: Connection) = conLastFailed.getOrElse(con,
 		Deadline.now - 10000.seconds).timeLeft < (-conRetryInterval)
+
+	context.system.scheduler.schedule(10.seconds, 1.minute, self, MaybeChangeConnection)
 
 	def getStratumRef(con: Connection) = stratumRefs get con match {
 		//create connection if non-existent and retry allowed
@@ -173,5 +177,19 @@ class StratumPool(hashType: ScalaMiner.HashType)
 				currentConnection = None
 
 			checkConnections()
+
+		case MaybeChangeConnection =>
+			val maybeCon = pickConnection
+
+			if(maybeCon != currentConnection && maybeCon.isDefined) {
+				log.info("Changing server to " + maybeCon)
+				for {
+					con <- currentConnection
+					ref <- stratumRefs get con
+				} context stop ref
+
+				currentConnection = maybeCon
+				subscribers foreach updateSubscriber
+			}
 	}
 }

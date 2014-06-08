@@ -22,7 +22,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 	val nfuBits = 50 // ?? also seen 30?
 	val nChips = 1
 
-	def readDelay = 4.millis
+	def readDelay = 20.millis
 	def readSize = 64
 	def nonceTimeout = 15.seconds
 	def identity = BitFury.NFU
@@ -258,7 +258,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	//val rollLimit = 60.seconds
 	val transferTimeout = 5.seconds
 
-	val readDelay: FiniteDuration = latency * 2
+	val readDelay: FiniteDuration = 20.millis//latency * 2
 	val isFTDI: Boolean = true
 	val readSize: Int = 512
 	val nonceTimeout: FiniteDuration = 15.seconds

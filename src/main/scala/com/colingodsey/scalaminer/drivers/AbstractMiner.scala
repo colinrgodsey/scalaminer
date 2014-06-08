@@ -93,7 +93,7 @@ object AbstractMiner {
 			else hashesForDiffSHA256(diff)
 			//self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 			//log.info("Good hash " + hashBin.reverse.toHex)
-			log.info("Submitting " + hashBin.toHex + " nonce " + nonce.toList)
+			log.info("Submitting " + hashBin.reverse.toHex + " nonce " + nonce.toList)
 
 			val ntimepos = 17 * 4 // 17th integer in datastring
 			val noncepos = 19 * 4 // 19th integer in datastring

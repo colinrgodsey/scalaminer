@@ -141,17 +141,18 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 }
 
 class ANUAMUDevice(val deviceId: Usb.DeviceId,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef],
-		isANU: Boolean) extends Icarus {
+		val identity: USBIdentity,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends Icarus {
 	import Icarus._
 	import Constants._
 	import CP210X._
 
-	def identity = AMU
 	def workDivision: Int = 1
 	def chipCount: Int = 1
 
 	def freq = 200 //can change
+
+	def isANU = identity == ANU
 
 	lazy val clampedFreq = getAntMinerFreq(freq).toInt
 
@@ -261,7 +262,7 @@ case object Icarus extends USBDeviceDriver {
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[ANUAMUDevice], device, workRefs, true)
+			Props(classOf[ANUAMUDevice], device, ANU, workRefs)
 	}
 
 	//u2?
@@ -285,7 +286,7 @@ case object Icarus extends USBDeviceDriver {
 
 		override def usbDeviceActorProps(device: Usb.DeviceId,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[ANUAMUDevice], device, workRefs, false)
+			Props(classOf[ANUAMUDevice], device, AMU, workRefs)
 	}
 
 	object Constants {

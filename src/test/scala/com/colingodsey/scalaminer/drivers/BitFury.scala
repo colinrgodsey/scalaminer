@@ -18,6 +18,7 @@ import org.scalatest._
 import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
+import com.colingodsey.scalaminer.drivers.bitfury.BitFury
 
 class BitFurySuite extends FlatSpec {
 	val testData = "000000026681dfaafb4259b0decafc6dcc6b53c83c5b4b525a9d3af30000000000000000ce633c8f69c2163a96df5d9c4c73b05380cf7bf6f56ab90b07987bcf2f86e98a538b5f5a1869284200000000".fromHex

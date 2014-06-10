@@ -5,7 +5,6 @@
  * https://github.com/colinrgodsey/scalaminer
  *
  * Copyright 2014 Colin R Godsey <colingodsey.com>
- * Copyright 2011-2014 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free

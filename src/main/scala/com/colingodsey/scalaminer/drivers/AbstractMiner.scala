@@ -75,14 +75,14 @@ object AbstractMiner {
 		if(hashInt < (difMask)) {
 			val hashes = if(isScrypt) hashesForDiffScrypt(1)
 			else hashesForDiffSHA256(1)
-			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+			//self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 
 			self ! ValidShareProcessed
 		}
 
 		if(getInts(nonce).head == -1) {
 			log.error("Nonce error!")
-			self ! PoisonPill
+			//self ! PoisonPill
 			self ! MinerMetrics.NonceFail
 		} else if(hashInt > (difMask / diff)) {
 			log.debug("Share is below expected target " +
@@ -91,7 +91,7 @@ object AbstractMiner {
 		} else {
 			val hashes = if(isScrypt) hashesForDiffScrypt(diff)
 			else hashesForDiffSHA256(diff)
-			//self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 			//log.info("Good hash " + hashBin.reverse.toHex)
 			log.info("Submitting " + hashBin.reverse.toHex + " nonce " + nonce.toList)
 
@@ -208,7 +208,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	def workReceive: Receive = {
 		case AbstractMiner.WorkTimeout =>
 			//log.debug("Nonce timeout! Restarting work...")
-			log.error("Nonce error! Killing....")
+			log.error("Nonce timeout! Killing....")
 			self ! AbstractMiner.CancelWork
 			resetWorkTimer()
 			context stop self

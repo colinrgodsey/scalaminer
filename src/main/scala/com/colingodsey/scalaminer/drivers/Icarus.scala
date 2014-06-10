@@ -5,6 +5,7 @@
  * https://github.com/colinrgodsey/scalaminer
  *
  * Copyright 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2011-2014 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -46,7 +47,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 	def baud = 115200
 	def readDelay = 10.millis//75.millis
 	def readSize = 64 //512 //NOTE: I feel like this really is always 512.. right?
-	def nonceTimeout = identity.timeout //probably identity timeout
+	def nonceTimeout = 25.seconds //probably identity timeout
 	def hashType = ScalaMiner.SHA256
 	def isFTDI = false
 
@@ -97,6 +98,8 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 		send(intf, buf)
 
+		log.debug("Submitting work")
+
 		lastJob = Some(job)
 	}
 
@@ -108,12 +111,13 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 				val nonce = buf.take(4)
 				dropBuffer(intf, buf.length)
 
-				//log.info("nonce " + nonce)
+				log.info("nonce " + nonce.toHex)
 
 				if(!finishedInit) {
 					require(nonce == goldenNonce, s"$nonce == $goldenNonce")
 
 					finishedInit = true
+					log.info("Golden nonce detected!")
 
 					self ! StartWork
 
@@ -121,6 +125,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 					unstashAll()
 				} else lastJob match {
 					case Some(Stratum.Job(work, id, merk, en2, _)) =>
+						log.info("Send nonce " + nonce.reverse.toHex)
 						self ! Nonce(work, nonce.reverse, en2)
 						self ! StartWork
 					case _ =>
@@ -133,6 +138,9 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 		super.preStart()
 
 		stratumSubscribe(stratumRef)
+
+		context.system.scheduler.schedule(4.seconds, nonceTimeout / 4,
+			self, AbstractMiner.CancelWork)
 
 		getDevice {
 			doInit()

@@ -191,5 +191,7 @@ class StratumPool(hashType: ScalaMiner.HashType)
 				currentConnection = maybeCon
 				subscribers foreach updateSubscriber
 			}
+
+			checkConnections()
 	}
 }

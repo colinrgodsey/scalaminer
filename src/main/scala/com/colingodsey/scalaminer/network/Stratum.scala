@@ -137,10 +137,10 @@ class StratumActor(conn: Stratum.Connection,
 		case Tcp.CommandFailed(cmd) =>
 			sys.error("TCP command failed " + cmd)
 		case x: Tcp.ConnectionClosed =>
-			//TODO: on stratum restart, suscribers arent carried over
-			log.warning(s"$conn closed with $x!")
-			context unwatch connectionActor
-			connect()
+			//just close, let pool restart
+			sys.error(s"$conn closed with $x!")
+			//context unwatch connectionActor
+			//connect()
 		case Tcp.Received(data) =>
 			val str = new String(data.toArray, "UTF8")
 

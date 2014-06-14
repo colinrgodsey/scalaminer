@@ -138,7 +138,7 @@ class StratumActor(conn: Stratum.Connection,
 			sys.error("TCP command failed " + cmd)
 		case x: Tcp.ConnectionClosed =>
 			//TODO: on stratum restart, suscribers arent carried over
-			log.warning("Connection closed! " + x)
+			log.warning(s"$conn closed with $x!")
 			context unwatch connectionActor
 			connect()
 		case Tcp.Received(data) =>
@@ -188,7 +188,7 @@ class StratumActor(conn: Stratum.Connection,
 
 	def waitingConnect: Receive = dataReceive orElse {
 		case _: Tcp.Connected =>
-			log.info("Connected!")
+			log.info(conn + " connected!")
 
 			connectionActor = sender
 			connectionActor ! Tcp.Register(self)
@@ -202,7 +202,7 @@ class StratumActor(conn: Stratum.Connection,
 	}
 
 	def receiveResponses: Receive = {
-		case x @ JSONResponse(js) if x.isBroadcast =>
+		case x@JSONResponse(js) if x.isBroadcast =>
 			lastRecv = Deadline.now
 
 			js.fields("method").convertTo[String] match {
@@ -238,10 +238,12 @@ class StratumActor(conn: Stratum.Connection,
 			/*if(js.fields.get("error") != Some(JsNull))
 				log.warning("Js error! " + js.fields("error"))*/
 
-			require(responseMap.get(id).isDefined, "No response callback for resp " + id)
-
-			responseMap(id)(js)
-			responseMap -= id
+			if(!responseMap.get(id).isDefined) {
+				log.warning("No response callback for resp " + id)
+			} else {
+				responseMap(id)(js)
+				responseMap -= id
+			}
 
 		case SubmitStratumJob(params0, job) =>
 			val params = conn.user.toJson +: params0

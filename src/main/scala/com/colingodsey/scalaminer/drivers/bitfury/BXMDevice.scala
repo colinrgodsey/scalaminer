@@ -70,6 +70,8 @@ class BXMDevice(val deviceId: Usb.DeviceId, val config: Config,
 	def init() = getDevice {
 		log.info("Sending init")
 
+		bufferRead(intf)
+
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_RESET_REQUEST, SIO_RESET_SIO, controlIndex).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_LATENCY_TIMER_REQUEST,
 			latency.toMillis.toShort, controlIndex).send
@@ -82,6 +84,7 @@ class BXMDevice(val deviceId: Usb.DeviceId, val config: Config,
 	def purgeBuffers() {
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_RESET_REQUEST, SIO_RESET_PURGE_RX, controlIndex).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_RESET_REQUEST, SIO_RESET_PURGE_TX, controlIndex).send
+		dropBuffer(intf)
 	}
 
 	def setCSHigh() =

@@ -48,7 +48,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 	def baud = 115200
 	def readDelay = 10.millis//75.millis
 	def readSize = identity.interfaces.head.output.size //64
-	def nonceTimeout = 25.seconds //probably identity timeout
+	def nonceTimeout = 30.seconds //probably identity timeout
 	def hashType = ScalaMiner.SHA256
 	def isFTDI = false
 
@@ -140,7 +140,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 		stratumSubscribe(stratumRef)
 
-		context.system.scheduler.schedule(4.seconds, nonceTimeout / 4,
+		context.system.scheduler.schedule(4.seconds, nonceTimeout / 2,
 			self, AbstractMiner.CancelWork)
 
 		getDevice {

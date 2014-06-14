@@ -32,6 +32,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 			desc.product.toInt).map(intToBytes(_).drop(2).toHex).mkString("-")
 
 		lazy val portId = Seq(bus, address, port).map(intToBytes(_).drop(3).toHex).mkString("-")
+		//lazy val portId = Seq(bus, port).map(intToBytes(_).drop(3).toHex).mkString("-")
 
 		override def toString = s"DeviceId($idKey)"
 	}

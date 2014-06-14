@@ -28,7 +28,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 	def maxUsbQueueSize = 500
 	//TODO: this needs to be configurable, dynamic or otherwise
-	val irpTimeout = 2.minutes//100.millis
+	var irpTimeout = 100.millis
 	//TODO: this probably should never be here... or be configurable
 	val irpDelay = 2.millis
 
@@ -166,6 +166,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		case SetConfiguration(config) =>
 			LibUsb.setConfiguration(handle, config)
+		case SetTimeout(dur) => irpTimeout = dur
 	}
 
 	override def preStart() {

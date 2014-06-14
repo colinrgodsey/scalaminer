@@ -27,6 +27,7 @@ import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsWorker}
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import com.colingodsey.scalaminer.network.Stratum
+import com.typesafe.config.Config
 
 trait Icarus extends UsbDeviceActor with AbstractMiner
 		with MetricsWorker with BufferedReader  {
@@ -46,7 +47,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 	def baud = 115200
 	def readDelay = 10.millis//75.millis
-	def readSize = 64 //512 //NOTE: I feel like this really is always 512.. right?
+	def readSize = identity.interfaces.head.output.size //64
 	def nonceTimeout = 25.seconds //probably identity timeout
 	def hashType = ScalaMiner.SHA256
 	def isFTDI = false
@@ -111,7 +112,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 				val nonce = buf.take(4)
 				dropBuffer(intf, buf.length)
 
-				log.info("nonce " + nonce.toHex)
+				log.debug("nonce " + nonce.toHex)
 
 				if(!finishedInit) {
 					require(nonce == goldenNonce, s"$nonce == $goldenNonce")
@@ -125,7 +126,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 					unstashAll()
 				} else lastJob match {
 					case Some(Stratum.Job(work, id, merk, en2, _)) =>
-						log.info("Send nonce " + nonce.reverse.toHex)
+						log.debug("Send nonce " + nonce.reverse.toHex)
 						self ! Nonce(work, nonce.reverse, en2)
 						self ! StartWork
 					case _ =>
@@ -259,7 +260,7 @@ case object Icarus extends USBDeviceDriver {
 		def iManufacturer = ""
 		def iProduct = ""
 		def config = 1
-		def timeout = 1.second //???? work timeout?
+		def timeout = 11.second
 
 		val interfaces = Set(
 			Usb.Interface(0, Set(
@@ -268,7 +269,7 @@ case object Icarus extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[ANUAMUDevice], device, ANU, workRefs)
 	}
@@ -283,7 +284,7 @@ case object Icarus extends USBDeviceDriver {
 		def iManufacturer = ""
 		def iProduct = ""
 		def config = 1
-		def timeout = 1.second //???? work timeout?
+		def timeout = 11.second
 
 		val interfaces = Set(
 			Usb.Interface(0, Set(
@@ -292,7 +293,7 @@ case object Icarus extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[ANUAMUDevice], device, AMU, workRefs)
 	}

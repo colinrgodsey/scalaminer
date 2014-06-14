@@ -39,6 +39,7 @@ import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+import com.typesafe.config.Config
 
 /**
  * Device actor for BFLSC devices. Instead of a request->response style interface,
@@ -68,9 +69,9 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	 */
 	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
-	def pollDelay = RES_TIME - latency
 	def nonceTimeout = 11.seconds
-	def readDelay = latency
+	def readDelay = latency * 3
+	def pollDelay = RES_TIME - readDelay
 	def readSize = BUFSIZ
 	def isFTDI = true
 	override def hashType: HashType = ScalaMiner.SHA256
@@ -409,6 +410,9 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	override def postStop() {
 		super.postStop()
 
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex).send
+
 		pollTimer.cancel()
 		jobTimeoutTimer.cancel()
 	}
@@ -509,7 +513,7 @@ case object BFLSC extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BAS)
 	}
@@ -528,7 +532,7 @@ case object BFLSC extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BFL)
 	}

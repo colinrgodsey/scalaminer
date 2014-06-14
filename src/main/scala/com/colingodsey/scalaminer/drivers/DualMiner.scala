@@ -23,6 +23,7 @@ import com.colingodsey.scalaminer.utils._
 import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.metrics.MinerMetrics
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+import com.typesafe.config.Config
 
 class DualMinerScrypt(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends DualMinerFacet {
@@ -194,6 +195,8 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 	override def postStop() {
 		super.postStop()
 
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, INTERFACE_A).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, INTERFACE_A).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_RTS_HIGH, 2).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_MODEM_CTRL_REQUEST, SIO_SET_DTR_HIGH, 0).send
 	}
@@ -207,6 +210,8 @@ case object DualMiner extends USBDeviceDriver {
 	val dmTimeout = 100.millis
 
 	def hashType = ScalaMiner.Scrypt
+
+	override def submitsAtDifficulty = true
 
 	lazy val identities: Set[USBIdentity] = Set(DM)
 
@@ -242,7 +247,7 @@ case object DualMiner extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[DualMiner], device, workRefs)
 	}

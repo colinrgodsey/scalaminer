@@ -25,6 +25,7 @@ import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import akka.util.ByteString
 import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.drivers.AbstractMiner
+import com.typesafe.config.Config
 
 object BXMDevice {
 	 sealed trait Command
@@ -32,7 +33,7 @@ object BXMDevice {
 	 //case class ReceiveLine(cmd: String) extends Command
  }
 
-class BXMDevice(val deviceId: Usb.DeviceId,
+class BXMDevice(val deviceId: Usb.DeviceId, val config: Config,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends UsbDeviceActor with BitFury
 		with BufferedReader with AbstractMiner with MetricsWorker {
 	import FTDI._
@@ -42,15 +43,14 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	val latency = 2.millis
 	val freq = 200000
 	val identity = BitFury.BXM
-	val nChips = 2
-	val bxmBits = 54
+
 	//TODO: im guessing this can be set by stratum
 	//val rollLimit = 60.seconds
 	val transferTimeout = 5.seconds
 
 	val readDelay: FiniteDuration = 20.millis//latency * 2
 	val isFTDI: Boolean = true
-	val readSize: Int = 512
+	def readSize = identity.interfaces.head.output.size //512
 	val nonceTimeout: FiniteDuration = 15.seconds
 
 	val TWELVE_MHZ = 12000000
@@ -165,7 +165,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 
 			builder.addBreak()
 			builder.addFASync(i)
-			builder.setFreq(bxmBits)
+			builder.setFreq(freqBits)
 			builder.sendConf()
 			builder.sendInit()
 			transfer(builder.results) { _ =>
@@ -233,6 +233,7 @@ class BXMDevice(val deviceId: Usb.DeviceId,
 	override def postStop() {
 		super.postStop()
 
+		purgeBuffers()
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_BITMODE_REQUEST,
 			resetMode, controlIndex).send
 	}

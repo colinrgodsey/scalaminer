@@ -71,11 +71,16 @@ object ScalaMinerMain extends App {
 	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC,
 		GridSeed, BitMain, Icarus, BitFury)
 
+	def intOrOne(cfg: Config, key: String) = if(cfg hasPath key) cfg getInt key
+	else 1
+
 	def readStConns(cfgVal: ConfigValue): Seq[Connection] = cfgVal match {
 		case cfg0: ConfigObject =>
 			val cfg = cfg0.toConfig
 			Seq(Connection(cfg getString "host", cfg getInt "port",
-				cfg getString "user", cfg getString "pass"))
+				cfg getString "user", cfg getString "pass",
+				priority = intOrOne(cfg, "priority"),
+				weight = intOrOne(cfg, "weight")))
 		case x: ConfigList =>
 			x.toSeq flatMap readStConns
 		case _ => sys.error(s"bad connection cfg (${cfgVal.origin()}}) " + cfgVal)
@@ -164,6 +169,8 @@ object MinerDriver {
 //should be a case object
 trait MinerDriver {
 	def identities: Set[_ <: MinerIdentity]
+
+	def submitsAtDifficulty = false
 }
 
 //should be a case object

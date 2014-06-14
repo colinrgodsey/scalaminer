@@ -74,7 +74,6 @@ trait BufferedReader extends Actor with ActorLogging{
 			ReceiveBulkTransfer(interface, readSize))
 	}
 
-	//TODO: is FTDI always 64 bytes?
 	@tailrec final def trimFTDIData(dat: Seq[Byte],
 			acc: ByteString = ByteString.empty): ByteString = {
 		if(dat.length < readSize) acc ++ dat.drop(2)

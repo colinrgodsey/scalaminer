@@ -24,6 +24,7 @@ import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.io.usb.Usb.DeviceId
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+import com.typesafe.config.Config
 
 object GridSeedMiner {
 	sealed trait Command
@@ -38,13 +39,15 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 	def doInit()
 	def identity: USBIdentity
+	def config: Config
 
 	//dual BTC/LTC or just LTC
 	def isDual = false
 
-	def freq = DEFAULT_FREQUENCY
-	def baud = DEFAULT_BAUD
-	def nChips = DEFAULT_CHIPS
+	lazy val freq = config getInt "freq"
+	lazy val baud = config getInt "baud"
+	lazy val nChips = config getInt "chips"
+	lazy val altVoltage = config getBoolean "voltage" //hacked miners only
 
 	lazy val selectedFreq = getFreqFor(freq)
 
@@ -55,7 +58,6 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def nonceDelay = if(isFTDI) 50.millis else 3.millis
 
 	def jobTimeout = 5.minutes
-	def altVoltage = false //hacked miners only
 
 	val pollDelay = 10.millis
 	val maxWorkQueue = 15
@@ -268,7 +270,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	}
 }
 
-class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
+class GridSeedFTDIMiner(val deviceId: Usb.DeviceId, val config: Config,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
 	import FTDI._
 	import GridSeed._
@@ -307,7 +309,7 @@ class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
 
 }
 
-class GridSeedSGSMiner(val deviceId: Usb.DeviceId,
+class GridSeedSGSMiner(val deviceId: Usb.DeviceId, val config: Config,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
 	import FTDI._
 	import GridSeed._
@@ -402,7 +404,9 @@ case object GridSeed extends USBDeviceDriver {
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
-	val gsTimeout = 100.millis
+	override def submitsAtDifficulty = true
+
+	val gsTimeout = 2.minutes
 	val btcNonceReadTimeout = 11152.millis
 	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
 
@@ -423,9 +427,9 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 3, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[GridSeedSGSMiner], device, workRefs)
+			Props(classOf[GridSeedSGSMiner], device, config, workRefs)
 	}
 
 	case object GSD1 extends USBIdentity {
@@ -443,7 +447,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 1, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
@@ -462,9 +466,9 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(512, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[GridSeedFTDIMiner], device, workRefs)
+			Props(classOf[GridSeedFTDIMiner], device, config, workRefs)
 	}
 
 	case object GSD3 extends USBIdentity {
@@ -482,7 +486,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		def usbDeviceActorProps(device: Usb.DeviceId,
+		def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			??? //Props(classOf[GSD3Device], device)
 	}

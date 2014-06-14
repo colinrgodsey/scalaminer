@@ -19,6 +19,7 @@ import scala.collection.JavaConversions._
 import org.usb4java.LibUsb
 import com.typesafe.config.Config
 import akka.io.SelectionHandlerSettings
+import scala.concurrent.duration.FiniteDuration
 
 object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	case class ControlIrp(requestType: Byte, request: Byte,
@@ -76,6 +77,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	}
 
 	case class SetConfiguration(config: Int) extends DeviceRequest
+	case class SetTimeout(timeout: FiniteDuration) extends DeviceRequest
 
 	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
 		def interface = ControlInterface

@@ -40,6 +40,7 @@ class StratumPool(hashType: ScalaMiner.HashType)
 	import StratumPool._
 
 	def conRetryInterval = 2.seconds
+	def connectionSwitchInterval = 5.minutes
 
 	override val supervisorStrategy =
 		OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 2.seconds) {
@@ -66,7 +67,7 @@ class StratumPool(hashType: ScalaMiner.HashType)
 	def canRetry(con: Connection) = conLastFailed.getOrElse(con,
 		Deadline.now - 10000.seconds).timeLeft < (-conRetryInterval)
 
-	context.system.scheduler.schedule(10.seconds, 1.minute, self, MaybeChangeConnection)
+	context.system.scheduler.schedule(10.seconds, connectionSwitchInterval, self, MaybeChangeConnection)
 
 	def getStratumRef(con: Connection) = stratumRefs get con match {
 		//create connection if non-existent and retry allowed
@@ -130,6 +131,11 @@ class StratumPool(hashType: ScalaMiner.HashType)
 		checkConnections()
 	}
 
+	def currentStratumRef = for {
+		con <- currentConnection
+		ref <- stratumRefs get con
+	} yield ref
+
 	def receive = {
 		case AddConnection(con) =>
 			stratumConnections += con
@@ -144,10 +150,8 @@ class StratumPool(hashType: ScalaMiner.HashType)
 		case Terminated(ref) if subscribers(ref) =>
 			subscribers -= ref
 
-		case x: SubmitStratumJob => for {
-			con <- currentConnection
-			ref <- stratumRefs get con
-		} ref.tell(x, sender)
+		case x: SubmitStratumJob =>
+			currentStratumRef.map(_.tell(x, sender))
 		case x: ExtraNonce if stratumRefsRev contains sender =>
 			val con = stratumRefsRev(sender)
 			extraNonces += con -> x
@@ -183,6 +187,7 @@ class StratumPool(hashType: ScalaMiner.HashType)
 
 			if(maybeCon != currentConnection && maybeCon.isDefined) {
 				log.info("Changing server to " + maybeCon)
+
 				for {
 					con <- currentConnection
 					ref <- stratumRefs get con

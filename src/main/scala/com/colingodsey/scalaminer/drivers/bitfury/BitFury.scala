@@ -26,13 +26,17 @@ import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import akka.util.ByteString
 import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.drivers.AbstractMiner
+import com.typesafe.config.Config
 
 
 trait BitFury extends BufferedReader with AbstractMiner {
 	private implicit def ec = context.system.dispatcher
 
 	def transfer(dat: Seq[Byte])(after: Seq[Byte] => Unit)
-	def nChips: Int
+	def config: Config
+
+	lazy val nChips = config getInt "chips"
+	lazy val freqBits = config getInt "freq-bits"
 
 	def hashType = ScalaMiner.SHA256
 
@@ -141,7 +145,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 case object BitFury extends USBDeviceDriver {
 	sealed trait Command
 
-	val defaultTimeout = 100.millis
+	val defaultTimeout = 11.seconds
 
 	def hashType = ScalaMiner.SHA256
 
@@ -169,9 +173,9 @@ case object BitFury extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[NanoFury], device, workRefs)
+			Props(classOf[NanoFury], device, config, workRefs)
 	}
 
 	case object BXM extends USBIdentity {
@@ -191,9 +195,9 @@ case object BitFury extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[BXMDevice], device, workRefs)
+			Props(classOf[BXMDevice], device, config, workRefs)
 	}
 
 	def genPayload(work: Work) = {

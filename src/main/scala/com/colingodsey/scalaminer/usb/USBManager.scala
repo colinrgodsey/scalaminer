@@ -21,7 +21,7 @@ import akka.pattern._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
 import com.colingodsey.scalaminer.metrics.MinerMetrics
-import com.typesafe.config.Config
+import com.typesafe.config.{ConfigFactory, Config}
 import com.colingodsey.io.usb.Usb
 import akka.util.Timeout
 import akka.io.IO
@@ -38,6 +38,8 @@ trait USBDeviceDriver extends MinerDriver {
 	def identities: Set[USBIdentity]
 
 	def hashType: ScalaMiner.HashType
+
+	def name = toString.toLowerCase()
 }
 
 //should be a case object
@@ -58,7 +60,7 @@ trait USBIdentity extends MinerIdentity {
 	//TODO: implement tryAfter logic! super useful for AMU/ANU for example
 	def tryAfter: Set[USBIdentity] = Set()
 
-	def usbDeviceActorProps(device: Usb.DeviceId,
+	def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
 
 	/*def matches(device: UsbDevice) = {
@@ -99,6 +101,8 @@ class UsbDeviceManager(config: Config)
 	implicit def system = context.system
 	private implicit def ec = context.system.dispatcher
 
+	def removeDelay = 1.2.seconds
+
 	lazy val libUsbHost: ActorRef = IO(Usb)
 
 	var usbDrivers: Set[USBDeviceDriver] = Set.empty
@@ -111,6 +115,8 @@ class UsbDeviceManager(config: Config)
 
 	val identityResetTimer = context.system.scheduler.schedule(
 		1.minute, config getDur "identity-reset-time", self, IdentityReset)
+
+	def revWorkerMap = workerMap.map(_.swap)
 
 	case class CreateDeviceIdentity(id: Usb.DeviceId, identity: USBIdentity)
 	case object PollDevices
@@ -125,6 +131,10 @@ class UsbDeviceManager(config: Config)
 		pollQueued = true
 		self ! PollDevices
 	}
+
+	def optConfigOrBlank(key: String) =
+		if(config.hasPath(key)) config.getConfig(key)
+		else ConfigFactory.empty
 
 	def receive = {
 		case Start =>
@@ -154,7 +164,7 @@ class UsbDeviceManager(config: Config)
 
 			maybePoll()
 		case Terminated(x) =>
-			context.system.scheduler.scheduleOnce(500.millis, self, RemoveRef(x))
+			context.system.scheduler.scheduleOnce(removeDelay, self, RemoveRef(x))
 		case RemoveRef(x) =>
 			val filtered = workerMap.filter(_._2 == x).keySet
 
@@ -165,8 +175,14 @@ class UsbDeviceManager(config: Config)
 			maybePoll()
 		//got an identity and a device ref
 		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
-			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
-			val name = identity.name + "." + id.portId
+			val name = identity.name + "-" + id.portId
+
+			val devConfig = optConfigOrBlank(name) withFallback
+					optConfigOrBlank(identity.name.toLowerCase) withFallback
+					optConfigOrBlank(identity.drv.name.toLowerCase) withFallback
+					optConfigOrBlank("device")
+
+			val props = identity.usbDeviceActorProps(id, devConfig, stratumEndpoints)
 			val ref = context.actorOf(props, name = name)
 
 			log.info(s"Starting $ref for dev $id")

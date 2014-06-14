@@ -48,12 +48,13 @@ object AbstractMiner {
 	case object StatSubscribe extends Command
 	case object WorkTimeout extends Command
 
-	case object ValidShareProcessed extends Command
+	private[AbstractMiner] case object ValidShareProcessed extends Command
 
 	//TODO: self can be implicit, like tell...
 	def submitNonce(n: Nonce, job: Stratum.MiningJob, diff: Int,
 			target: Seq[Byte], strat: ActorRef, isScrypt: Boolean,
-			self: ActorRef, log: LoggingAdapter, difMask: BigInt) {
+			self: ActorRef, log: LoggingAdapter, difMask: BigInt,
+			submitsAtDifficulty: Boolean) {
 		val Nonce(work, nonce, extraNonce) = n
 
 		val header = ScalaMiner.BufferType.empty ++
@@ -73,9 +74,11 @@ object AbstractMiner {
 
 		//TODO: diff 1 hash rate, or target rate?
 		if(hashInt < (difMask)) {
-			val hashes = if(isScrypt) hashesForDiffScrypt(1)
+			def hashes = if(isScrypt) hashesForDiffScrypt(1)
 			else hashesForDiffSHA256(1)
-			//self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+
+			if(!submitsAtDifficulty)
+				self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 
 			self ! ValidShareProcessed
 		}
@@ -89,9 +92,10 @@ object AbstractMiner {
 					(hashBin.toHex, target.toHex))
 			self ! MinerMetrics.NonceShort
 		} else {
-			val hashes = if(isScrypt) hashesForDiffScrypt(diff)
+			def hashes = if(isScrypt) hashesForDiffScrypt(diff)
 			else hashesForDiffSHA256(diff)
-			self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
+			if(submitsAtDifficulty)
+				self ! MinerMetrics.MetricValue(MinerMetrics.Hashes, hashes)
 			//log.info("Good hash " + hashBin.reverse.toHex)
 			log.info("Submitting " + hashBin.reverse.toHex + " nonce " + nonce.toList)
 
@@ -149,6 +153,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	private implicit def asmEc = context.system.dispatcher
 
+	def identity: MinerIdentity
 	def hashType: ScalaMiner.HashType
 	//TODO: replace this with IO(Stratum) !!!!!
 	def workRefs: Map[ScalaMiner.HashType, ActorRef]
@@ -168,6 +173,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	var subRef: ActorRef = context.system.deadLetters
 	var finishedInit = false
 	var cancelWorkTimer: Option[Cancellable] = None
+	var hasSubmittedShare = false
 
 	def isScrypt = hashType == ScalaMiner.Scrypt
 
@@ -201,11 +207,17 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 
 	def resetWorkTimer() {
 		cancelWorkTimer.foreach(_.cancel())
-		cancelWorkTimer = Some apply context.system.scheduler.scheduleOnce(nonceTimeout,
+
+		val timeout = if(identity.drv.submitsAtDifficulty) nonceTimeout * difficulty
+		else nonceTimeout
+
+		cancelWorkTimer = Some apply context.system.scheduler.scheduleOnce(timeout,
 			self, AbstractMiner.WorkTimeout)
 	}
 
 	def workReceive: Receive = {
+		case ValidShareProcessed =>
+			hasSubmittedShare = true
 		case AbstractMiner.WorkTimeout =>
 			//log.debug("Nonce timeout! Restarting work...")
 			log.error("Nonce timeout! Killing....")
@@ -247,7 +259,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 			resetWorkTimer()
 			//break off into async
 			Future(submitNonce(n, miningJob.get, difficulty, targetBytes, stratumRef,
-					isScrypt, self, log, difMask)) onFailure { case x: Throwable =>
+					isScrypt, self, log, difMask,
+					identity.drv.submitsAtDifficulty)) onFailure { case x: Throwable =>
 				log.error(x, "Nonce submit failed!")
 			}
 	}

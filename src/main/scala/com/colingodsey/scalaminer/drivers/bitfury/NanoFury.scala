@@ -25,18 +25,16 @@ import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import akka.util.ByteString
 import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.drivers.AbstractMiner
+import com.typesafe.config.Config
 
-class NanoFury(val deviceId: Usb.DeviceId,
+class NanoFury(val deviceId: Usb.DeviceId, val config: Config,
 			val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends MCP2210Actor with BitFury
 			with BufferedReader with AbstractMiner with MetricsWorker {
 	  import MCP2210._
 	  import NanoFury._
 
-	  val nfuBits = 50 // ?? also seen 30?
-	  val nChips = 1
-
-	  def readDelay = 20.millis
-	  def readSize = 64
+	  def readDelay = 30.millis
+	  def readSize = identity.interfaces.head.output.size //64
 	  def nonceTimeout = 15.seconds
 	  def identity = BitFury.NFU
 
@@ -59,7 +57,7 @@ class NanoFury(val deviceId: Usb.DeviceId,
 				  val builder = new SPIDataBuilder
 				  builder.addBreak()
 				  builder.addFASync(n)
-				  builder.setFreq(nfuBits)
+				  builder.setFreq(freqBits)
 				  builder.sendConf()
 				  builder.sendInit()
 

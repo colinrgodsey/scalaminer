@@ -47,6 +47,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def isFTDI: Boolean
 	def readDelay: FiniteDuration
+	def hasSubmittedShare: Boolean
 
 	def defaultTimeout = identity.timeout
 	def minerIdentity: MinerIdentity = identity
@@ -71,6 +72,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			unstashAll()
 
 			deviceRef ! Usb.SetConfiguration(identity.config)
+			deviceRef ! Usb.SetTimeout(identity.timeout)
 
 			after
 		case Usb.Connected(`deviceId`, None) =>
@@ -88,7 +90,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def failDetect() {
 		log.info("Failed detection for " + identity)
-		context.parent ! UsbDeviceManager.FailedIdentify(deviceId, identity)
+		if(!hasSubmittedShare)
+			context.parent ! UsbDeviceManager.FailedIdentify(deviceId, identity)
 		context stop self
 	}
 
@@ -101,7 +104,14 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	abstract override def postStop() {
 		super.postStop()
 
-		//context stop deviceRef
+		//TODO: close, or not close?
+		//make sure this is shorter than the reset time in USBManager
+		val system = context.system
+		context.system.scheduler.scheduleOnce(500.millis) {
+			system stop deviceRef
+		}
+
+		deviceRef ! Usb.SetTimeout(100.millis)
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

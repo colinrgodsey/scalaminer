@@ -69,7 +69,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	 */
 	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
-	def nonceTimeout = 11.seconds
+	def nonceTimeout = 1.minute
 	def readDelay = latency * 3
 	def pollDelay = RES_TIME - readDelay
 	def readSize = BUFSIZ
@@ -277,6 +277,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	def init() = getDevice {
 		var lines = Vector.empty[String]
 		var gotIdentity = false
+		var dumpingInput = true
 
 		object PostIrp
 		object PostIrp2
@@ -296,12 +297,17 @@ class BFLSC(val deviceId: Usb.DeviceId,
 
 		startRead()
 
-		context become (workReceive orElse responseReceive orElse {
+		context become (workReceive orElse ({
 			case GetResults =>
 			case Usb.ControlIrpResponse(`lastPurgeIrp`, _) =>
 				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp)
 				dropBuffer(intf)
+				//send first identity, then just dump all the data
+				send(intf, IDENTIFY.getBytes)
+			case BufferedReader.BufferUpdated(`intf`) if dumpingInput =>
+				dropBuffer(intf)
 			case PostIrp =>
+				dumpingInput = false
 				dropBuffer(intf)
 				send(intf, IDENTIFY.getBytes)
 				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp2)
@@ -330,6 +336,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 				postInit()
 			case ReceiveLine(line) =>
 				lines :+= line
+		}: Receive) orElse responseReceive orElse {
 			case NonTerminated(_) => stash()
 		})
 	}
@@ -437,7 +444,7 @@ case object BFLSC extends USBDeviceDriver {
 	case object CheckTemp extends BFLSCNonCriticalCommand
 	case class ExpireJobs(set: Set[Seq[Byte]]) extends BFLSCCommand
 
-	val bflTimeout = 100.millis
+	val bflTimeout = 250.millis
 
 	lazy val identities: Set[USBIdentity] = Set(BAS)
 
@@ -572,7 +579,7 @@ case object BFLSC extends USBDeviceDriver {
 		val QUE_MAX_RESULTS = 8
 
 		//TODO: figure out if this should really be 512 or 0x1000
-		val BUFSIZ = 512 //0x1000
+		val BUFSIZ = 0x1000//512 //0x1000
 
 		//commands
 		val IDENTIFY = "ZGX"

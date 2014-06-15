@@ -52,6 +52,8 @@ trait USBIdentity extends MinerIdentity {
 	def config: Int
 	def timeout: FiniteDuration
 
+	//delay in irp queue
+	def irpDelay = 2.millis
 	def latency: FiniteDuration = 32.millis
 	def name: String = toString
 

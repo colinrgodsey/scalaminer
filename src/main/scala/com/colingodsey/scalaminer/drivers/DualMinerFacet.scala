@@ -32,6 +32,8 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 
 	def cts: Boolean
 
+	//TODO: think this needs this val irpDelay = 2.millis
+
 	def nonceTimeout = if(isScrypt) 33.seconds else 11.seconds
 	def readDelay = 75.millis
 	def readSize = 512 // ?

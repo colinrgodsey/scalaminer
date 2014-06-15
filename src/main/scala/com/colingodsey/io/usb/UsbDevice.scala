@@ -30,7 +30,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 	//TODO: this needs to be configurable, dynamic or otherwise
 	var irpTimeout = 100.millis
 	//TODO: this probably should never be here... or be configurable
-	val irpDelay = 0.millis
+	var irpDelay = 2.millis
 
 	var claimedInterfaces = Set.empty[Int]
 	var endpointQueues = Map.empty[Endpoint, mutable.Queue[(IrpRequest, ActorRef)]]
@@ -166,7 +166,8 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		case SetConfiguration(config) =>
 			LibUsb.setConfiguration(handle, config)
-		case SetTimeout(dur) => irpTimeout = dur
+		case SetIrpTimeout(dur) => irpTimeout = dur
+		case SetIrpDelay(delay) => irpDelay = delay
 	}
 
 	override def preStart() {

@@ -78,7 +78,8 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	}
 
 	case class SetConfiguration(config: Int) extends DeviceRequest
-	case class SetTimeout(timeout: FiniteDuration) extends DeviceRequest
+	case class SetIrpTimeout(timeout: FiniteDuration) extends DeviceRequest
+	case class SetIrpDelay(timeout: FiniteDuration) extends DeviceRequest
 
 	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
 		def interface = ControlInterface

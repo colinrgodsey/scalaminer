@@ -72,7 +72,8 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			unstashAll()
 
 			deviceRef ! Usb.SetConfiguration(identity.config)
-			deviceRef ! Usb.SetTimeout(identity.timeout)
+			deviceRef ! Usb.SetIrpTimeout(identity.timeout)
+			deviceRef ! Usb.SetIrpDelay(identity.irpDelay)
 
 			after
 		case Usb.Connected(`deviceId`, None) =>
@@ -111,7 +112,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			system stop deviceRef
 		}
 
-		deviceRef ! Usb.SetTimeout(100.millis)
+		deviceRef ! Usb.SetIrpTimeout(100.millis)
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

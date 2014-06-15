@@ -12,3 +12,4 @@
 * BitFury support (Nanofury and Blue/RedFury)
 * Started development on CGMiner API
 * Various stability and performance fixes
+* More accurate timeouts and identity failure

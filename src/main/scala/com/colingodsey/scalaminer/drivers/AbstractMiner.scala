@@ -150,6 +150,8 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	
 	implicit def system = context.system
 	implicit def to = Timeout(10.seconds + (5000 * math.random).millis)
+	def nonceTimeoutFactor = 5
+	def detectTimeout = 10.seconds
 
 	private implicit def asmEc = context.system.dispatcher
 
@@ -160,8 +162,6 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 	def nonceTimeout: FiniteDuration
 
 	def failDetect()
-
-	def detectTimeout = 10.seconds
 
 	def stratumRef = workRefs(if(isScrypt) ScalaMiner.Scrypt else ScalaMiner.SHA256)
 
@@ -211,13 +211,15 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 		val timeout = if(identity.drv.submitsAtDifficulty) nonceTimeout * difficulty
 		else nonceTimeout
 
-		cancelWorkTimer = Some apply context.system.scheduler.scheduleOnce(timeout,
+		cancelWorkTimer = Some apply context.system.scheduler.scheduleOnce(
+			timeout * nonceTimeoutFactor,
 			self, AbstractMiner.WorkTimeout)
 	}
 
 	def workReceive: Receive = {
 		case ValidShareProcessed =>
 			hasSubmittedShare = true
+			finishedInit = true
 		case AbstractMiner.WorkTimeout =>
 			//log.debug("Nonce timeout! Restarting work...")
 			log.error("Nonce timeout! Killing....")
@@ -254,7 +256,7 @@ trait AbstractMiner extends Actor with ActorLogging with Stash {
 		case x: MiningJob =>
 			miningJob = Some(x)
 			self ! AbstractMiner.CancelWork
-			resetWorkTimer()
+			//resetWorkTimer()
 		case n: Nonce =>
 			resetWorkTimer()
 			//break off into async

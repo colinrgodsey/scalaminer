@@ -279,6 +279,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		var gotIdentity = false
 
 		object PostIrp
+		object PostIrp2
 
 		val lastPurgeIrp = Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
 
@@ -293,15 +294,20 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
 		deviceRef ! lastPurgeIrp.send
 
+		startRead()
+
 		context become (workReceive orElse responseReceive orElse {
 			case GetResults =>
 			case Usb.ControlIrpResponse(`lastPurgeIrp`, _) =>
 				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp)
-				send(intf, IDENTIFY.getBytes)
+				dropBuffer(intf)
 			case PostIrp =>
+				dropBuffer(intf)
+				send(intf, IDENTIFY.getBytes)
+				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp2)
+			case PostIrp2 =>
 				send(intf, DETAILS.getBytes)
 
-				startRead()
 			case ReceiveLine(line) if !gotIdentity =>
 				gotIdentity = true
 				log.info("Identity " + line)

@@ -209,6 +209,8 @@ class BXMDevice(val deviceId: Usb.DeviceId, val config: Config,
 			deviceRef ! Usb.SendBulkTransfer(intf,
 				Seq[Byte](SET_OUT_ACBUS, 0/*Bitmask for HIGH_PORT*/, 0xFF.toByte), highPinsSet)
 
+			dropBuffer(intf)
+
 		case Usb.BulkTransferResponse(`intf`, _, `highPinsSet`) =>
 			log.info("High pins set")
 			purgeBuffers()
@@ -235,6 +237,15 @@ class BXMDevice(val deviceId: Usb.DeviceId, val config: Config,
 
 	override def postStop() {
 		super.postStop()
+
+		for(i <- 0 until nChips) {
+			val builder = new SPIDataBuilder
+
+			builder.addBreak()
+			builder.addFASync(i)
+			builder.configReg(4, false)
+			send(intf, builder.results)
+		}
 
 		purgeBuffers()
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, SIO_SET_BITMODE_REQUEST,

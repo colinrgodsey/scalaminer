@@ -28,6 +28,10 @@ import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import com.colingodsey.scalaminer.network.Stratum
 import com.typesafe.config.Config
+import com.colingodsey.scalaminer.usb.FTDI._
+import com.colingodsey.scalaminer.Nonce
+import scala.Some
+import com.colingodsey.scalaminer.Work
 
 trait Icarus extends UsbDeviceActor with AbstractMiner
 		with MetricsWorker with BufferedReader  {
@@ -171,6 +175,8 @@ class ANUAMUDevice(val deviceId: Usb.DeviceId,
 	object GetGolden
 
 	def doInit() {
+		bufferRead(intf)
+
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_IFC_ENABLE,
 			VALUE_UART_ENABLE, intf.interface).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA,
@@ -199,7 +205,7 @@ class ANUAMUDevice(val deviceId: Usb.DeviceId,
 			context.system.scheduler.scheduleOnce(50.millis, self, GetGolden)
 			//context.system.scheduler.scheduleOnce(100.millis, self, GetGolden)
 
-			bufferRead(intf)
+			dropBuffer(intf)
 
 			if(isANU) sendANUFreq()
 		case GetGolden => detect()

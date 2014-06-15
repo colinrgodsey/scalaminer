@@ -116,7 +116,7 @@ trait BitFury extends BufferedReader with AbstractMiner {
 			//_ = println(nonceBytes)
 		} self ! Nonce(job.work, nonceBytes, job.extranonce2)
 
-		finishedInit = true
+		//finishedInit = true
 
 		lastResPerChip += chip -> nonceInts
 	}

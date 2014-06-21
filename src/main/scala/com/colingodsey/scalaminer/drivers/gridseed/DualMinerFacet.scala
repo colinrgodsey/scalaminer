@@ -11,9 +11,8 @@
  * any later version.  See COPYING for more details.
  */
 
-package com.colingodsey.scalaminer.drivers
+package com.colingodsey.scalaminer.drivers.gridseed
 
-import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
@@ -22,11 +21,11 @@ import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
+import com.colingodsey.scalaminer.drivers.AbstractMiner
 
 trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 		with MetricsWorker with BufferedReader {
 	import DualMiner._
-	import FTDI._
 
 	implicit def ec = system.dispatcher
 

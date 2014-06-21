@@ -92,7 +92,7 @@ the default config in reference.conf (override using application.conf in the bas
 of the provided ones doesn't work for you.
 * Configuration is done using Typesafe Config. Refer to the
 [*reference.conf*](https://github.com/colinrgodsey/scalaminer/blob/master/src/main/resources/reference.conf)
-file for config fields/structure. Place your overrides in *application.conf* in the base
+file for config fields/structure. Place your overrides in *scalaminer.conf* in the base
 directory. Make sure to configure your pools, or it uses the default (as seen in *reference.conf*)!
 * More info coming soon....
 

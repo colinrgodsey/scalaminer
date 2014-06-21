@@ -11,14 +11,13 @@
  * any later version.  See COPYING for more details.
  */
 
-package com.colingodsey.scalaminer.drivers
+package com.colingodsey.scalaminer.drivers.gridseed
 
-import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
 import com.colingodsey.scalaminer._
-import com.colingodsey.scalaminer.network.Stratum.{Job, MiningJob}
+import com.colingodsey.scalaminer.network.Stratum.MiningJob
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.metrics.MinerMetrics
@@ -203,7 +202,6 @@ class DualMiner(val deviceId: Usb.DeviceId, val workRefs: Map[ScalaMiner.HashTyp
 }
 
 case object DualMiner extends USBDeviceDriver {
-	import USBUtils._
 
 	sealed trait Command
 
@@ -224,7 +222,6 @@ case object DualMiner extends USBDeviceDriver {
 	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
 
 	case object DM extends USBIdentity {
-		import UsbDeviceManager._
 
 		def drv = DualMiner
 		def idVendor = FTDI.vendor
@@ -309,208 +306,37 @@ case object DualMiner extends USBDeviceDriver {
 		).map(_.fromHex)
 
 		val pll_freq_600M_cmd = Seq(
-		
 			"55AAEF000500E082",
 			"55AA0FFF581400C0"
 		).map(_.fromHex)
 
 		val pll_freq_550M_cmd = Seq(
-		
 			"55AAEF000500A082",
 			"55AA0FFFA61200C0"
 		).map(_.fromHex)
 
 		val pll_freq_500M_cmd = Seq(
-		
 			"55AAEF0005006082",
 			"55AA0FFFF41000C0"
 		).map(_.fromHex)
 
 		val pll_freq_400M_cmd = Seq(
-		
 			"55AAEF000500E081",
 			"55AA0FFF900D00C0"
 		).map(_.fromHex)
 
-		val btc_gating = Seq(
-		
-			"55AAEF0200000000",
-			"55AAEF0300000000",
-			"55AAEF0400000000",
-			"55AAEF0500000000",
-			"55AAEF0600000000"
-		).map(_.fromHex)
+		val btc_gating = GSConstants.disableSha2ForChip.map(_.fromHex)
 
-		val btc_single_open = Seq(
-		
-			"55AAEF0200000001",
-			"55AAEF0200000003",
-			"55AAEF0200000007",
-			"55AAEF020000000F",
-			"55AAEF020000001F",
-			"55AAEF020000003F",
-			"55AAEF020000007F",
-			"55AAEF02000000FF",
-			"55AAEF02000001FF",
-			"55AAEF02000003FF",
-			"55AAEF02000007FF",
-			"55AAEF0200000FFF",
-			"55AAEF0200001FFF",
-			"55AAEF0200003FFF",
-			"55AAEF0200007FFF",
-			"55AAEF020000FFFF",
-			"55AAEF020001FFFF",
-			"55AAEF020003FFFF",
-			"55AAEF020007FFFF",
-			"55AAEF02000FFFFF",
-			"55AAEF02001FFFFF",
-			"55AAEF02003FFFFF",
-			"55AAEF02007FFFFF",
-			"55AAEF0200FFFFFF",
-			"55AAEF0201FFFFFF",
-			"55AAEF0203FFFFFF",
-			"55AAEF0207FFFFFF",
-			"55AAEF020FFFFFFF",
-			"55AAEF021FFFFFFF",
-			"55AAEF023FFFFFFF",
-			"55AAEF027FFFFFFF",
-			"55AAEF02FFFFFFFF",
-			"55AAEF0300000001",
-			"55AAEF0300000003",
-			"55AAEF0300000007",
-			"55AAEF030000000F",
-			"55AAEF030000001F",
-			"55AAEF030000003F",
-			"55AAEF030000007F",
-			"55AAEF03000000FF",
-			"55AAEF03000001FF",
-			"55AAEF03000003FF",
-			"55AAEF03000007FF",
-			"55AAEF0300000FFF",
-			"55AAEF0300001FFF",
-			"55AAEF0300003FFF",
-			"55AAEF0300007FFF",
-			"55AAEF030000FFFF",
-			"55AAEF030001FFFF",
-			"55AAEF030003FFFF",
-			"55AAEF030007FFFF",
-			"55AAEF03000FFFFF",
-			"55AAEF03001FFFFF",
-			"55AAEF03003FFFFF",
-			"55AAEF03007FFFFF",
-			"55AAEF0300FFFFFF",
-			"55AAEF0301FFFFFF",
-			"55AAEF0303FFFFFF",
-			"55AAEF0307FFFFFF",
-			"55AAEF030FFFFFFF",
-			"55AAEF031FFFFFFF",
-			"55AAEF033FFFFFFF",
-			"55AAEF037FFFFFFF",
-			"55AAEF03FFFFFFFF",
-			"55AAEF0400000001",
-			"55AAEF0400000003",
-			"55AAEF0400000007",
-			"55AAEF040000000F",
-			"55AAEF040000001F",
-			"55AAEF040000003F",
-			"55AAEF040000007F",
-			"55AAEF04000000FF",
-			"55AAEF04000001FF",
-			"55AAEF04000003FF",
-			"55AAEF04000007FF",
-			"55AAEF0400000FFF",
-			"55AAEF0400001FFF",
-			"55AAEF0400003FFF",
-			"55AAEF0400007FFF",
-			"55AAEF040000FFFF",
-			"55AAEF040001FFFF",
-			"55AAEF040003FFFF",
-			"55AAEF040007FFFF",
-			"55AAEF04000FFFFF",
-			"55AAEF04001FFFFF",
-			"55AAEF04003FFFFF",
-			"55AAEF04007FFFFF",
-			"55AAEF0400FFFFFF",
-			"55AAEF0401FFFFFF",
-			"55AAEF0403FFFFFF",
-			"55AAEF0407FFFFFF",
-			"55AAEF040FFFFFFF",
-			"55AAEF041FFFFFFF",
-			"55AAEF043FFFFFFF",
-			"55AAEF047FFFFFFF",
-			"55AAEF04FFFFFFFF",
-			"55AAEF0500000001",
-			"55AAEF0500000003",
-			"55AAEF0500000007",
-			"55AAEF050000000F",
-			"55AAEF050000001F",
-			"55AAEF050000003F",
-			"55AAEF050000007F",
-			"55AAEF05000000FF",
-			"55AAEF05000001FF",
-			"55AAEF05000003FF",
-			"55AAEF05000007FF",
-			"55AAEF0500000FFF",
-			"55AAEF0500001FFF",
-			"55AAEF0500003FFF",
-			"55AAEF0500007FFF",
-			"55AAEF050000FFFF",
-			"55AAEF050001FFFF",
-			"55AAEF050003FFFF",
-			"55AAEF050007FFFF",
-			"55AAEF05000FFFFF",
-			"55AAEF05001FFFFF",
-			"55AAEF05003FFFFF",
-			"55AAEF05007FFFFF",
-			"55AAEF0500FFFFFF",
-			"55AAEF0501FFFFFF",
-			"55AAEF0503FFFFFF",
-			"55AAEF0507FFFFFF",
-			"55AAEF050FFFFFFF",
-			"55AAEF051FFFFFFF",
-			"55AAEF053FFFFFFF",
-			"55AAEF057FFFFFFF",
-			"55AAEF05FFFFFFFF",
-			"55AAEF0600000001",
-			"55AAEF0600000003",
-			"55AAEF0600000007",
-			"55AAEF060000000F",
-			"55AAEF060000001F",
-			"55AAEF060000003F",
-			"55AAEF060000007F",
-			"55AAEF06000000FF",
-			"55AAEF06000001FF",
-			"55AAEF06000003FF",
-			"55AAEF06000007FF",
-			"55AAEF0600000FFF",
-			"55AAEF0600001FFF",
-			"55AAEF0600003FFF",
-			"55AAEF0600007FFF",
-			"55AAEF060000FFFF",
-			"55AAEF060001FFFF",
-			"55AAEF060003FFFF",
-			"55AAEF060007FFFF",
-			"55AAEF06000FFFFF",
-			"55AAEF06001FFFFF",
-			"55AAEF06003FFFFF",
-			"55AAEF06007FFFFF",
-			"55AAEF0600FFFFFF",
-			"55AAEF0601FFFFFF",
-			"55AAEF0603FFFFFF",
-			"55AAEF0607FFFFFF",
-			"55AAEF060FFFFFFF",
-			"55AAEF061FFFFFFF",
-			"55AAEF063FFFFFFF",
-			"55AAEF067FFFFFFF",
-			"55AAEF06FFFFFFFF"
-		).map(_.fromHex)
+		// maps the above SHA chip gating with SHA-2 units
+		val btc_single_open = for {
+			chipGate <- GSConstants.disableSha2ForChip
+			gateInt = BigInt(chipGate.fromHex.toArray)
+			i <- 0 until 32
+			mask = (1L << (i + 1)) - 1
+		} yield bintToBytes(gateInt | mask, 8)
 
-		val ltc_only_init = Seq(
-			"55AAEF0200000000",
-			"55AAEF0300000000",
-			"55AAEF0400000000",
-			"55AAEF0500000000",
-			"55AAEF0600000000",
+		//scrypt only init for dualminer
+		val ltc_only_init = btc_gating ++ Seq(
 			"55AAEF3040000000",
 			"55AA1F2810000000",
 			"55AA1F2813000000",
@@ -522,20 +348,20 @@ case object DualMiner extends USBDeviceDriver {
 			//"55AA0FFF201B00C0",
 		).map(_.fromHex)
 
+		//scrypt only restart for dualminer, and init
 		val ltc_restart = Seq(
-		
 			"55AA1F2810000000",
 			"55AA1F2813000000"
 		).map(_.fromHex)
 
 		val btc_init = Seq(
-			"55AAEF3020000000",
-			"55AA1F2817000000"
+			GSConstants.enableSHA2,
+			GSConstants.enableGCP
 		).map(_.fromHex)
 
 		val ltc_init = Seq(
-			"55AA1F2814000000",
-			"55AA1F2817000000"
+			GSConstants.enableScrypt,
+			GSConstants.enableGCP
 		).map(_.fromHex)
 
 		val btc_open_nonce_unit = Seq(
@@ -543,8 +369,7 @@ case object DualMiner extends USBDeviceDriver {
 		).map(_.fromHex)
 
 		val btc_close_nonce_unit = Seq(
-		
-			"55AAEF0200000000"
+			GSConstants.disableSHA2
 		)
 
 		//needs padding to 64?

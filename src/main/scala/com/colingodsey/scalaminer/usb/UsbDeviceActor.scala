@@ -17,6 +17,7 @@ import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.io.usb.Usb
+import com.colingodsey.scalaminer.utils._
 import akka.io.IO
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.{NonTerminated}
 import com.colingodsey.scalaminer.MinerIdentity
@@ -61,7 +62,9 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	def send(interface: Usb.Interface, data: Seq[Byte]*) =
 		/*deviceRef ! Usb.SendBulkTransfer(interface,
 			data.foldLeft(ByteString.empty)(_ ++ _))*/
-		for(x <- data) deviceRef ! Usb.SendBulkTransfer(interface, x)
+		for(x <- data) {
+			deviceRef ! Usb.SendBulkTransfer(interface, x)
+		}
 
 	def waitingOnDevice(after: => Unit): Receive = {
 		case Usb.Connected(`deviceId`, Some(ref)) =>
@@ -72,7 +75,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			unstashAll()
 
 			deviceRef ! Usb.SetConfiguration(identity.config)
-			deviceRef ! Usb.SetIrpTimeout(identity.timeout)
+			deviceRef ! Usb.SetIrpTimeout(identity.irpTimeout)
 			deviceRef ! Usb.SetIrpDelay(identity.irpDelay)
 
 			after

@@ -107,6 +107,9 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		//log.info("Starting bulk transfer " + irpReq)
 
+		if(!irpReq.isRead)
+			log.info("sending " + dat.toHex)
+
 		if(!claimedInterfaces(inf)) {
 			log.debug("Claiming interface " + inf)
 

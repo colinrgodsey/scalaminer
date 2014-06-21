@@ -52,9 +52,10 @@ trait USBIdentity extends MinerIdentity {
 	def config: Int
 	def timeout: FiniteDuration
 
+	def irpTimeout = timeout
 	//delay in irp queue
 	def irpDelay = 2.millis
-	def latency: FiniteDuration = 32.millis
+	//def latency: FiniteDuration = 32.millis
 	def name: String = toString
 
 	def interfaces: Set[Usb.Interface]
@@ -111,6 +112,7 @@ class UsbDeviceManager(config: Config)
 	var workerMap: Map[Usb.DeviceId, ActorRef] = Map.empty
 	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
 	var failedIdentityMap: Map[Usb.DeviceId, Set[USBIdentity]] = Map.empty
+	var lastSuccessfulIdentity: Map[Usb.DeviceId, USBIdentity] = Map.empty
 	var metricsSubs = Set[ActorRef]()
 	var devices = Set.empty[Usb.DeviceId]
 	var pollQueued = false
@@ -163,6 +165,7 @@ class UsbDeviceManager(config: Config)
 
 			val s = failedIdentityMap.getOrElse(id, Set.empty)
 			failedIdentityMap += id -> (s + identity)
+			lastSuccessfulIdentity -= id
 
 			maybePoll()
 		case Terminated(x) =>
@@ -194,6 +197,9 @@ class UsbDeviceManager(config: Config)
 			metricsSubs.foreach(ref.tell(MinerMetrics.Subscribe, _))
 
 			workerMap += id -> ref
+
+			//add here, will be removed if fails ident
+			lastSuccessfulIdentity += id -> identity
 		case Usb.DeviceConnected(id) =>
 			devices += id
 
@@ -201,26 +207,33 @@ class UsbDeviceManager(config: Config)
 
 			maybePoll()
 		case Usb.DeviceDisconnected(id) =>
-			devices -= id
-
 			log.debug("Device disconnected " + id)
 
 			workerMap.get(id) foreach context.stop
+
+			workerMap -= id
+			devices -= id
+			lastSuccessfulIdentity -= id
+			failedIdentityMap -= id
 		case PollDevices =>
 			pollQueued = false
 
-			val matches = for {
-				id <- devices
+			val matchesSeq = for {
+				id <- devices.toSeq
 				if !id.desc.isHub
 				failedSet = failedIdentityMap.getOrElse(id, Set.empty)
 				if !workerMap.contains(id)
 				driver <- usbDrivers
-				identity <- driver.identities
+				lastGood = lastSuccessfulIdentity get id
+				//turn into a seq and put the possible good one first
+				identity <- lastGood.toSeq ++ (driver.identities -- lastGood.toSet).toSeq
 				if !failedSet(identity)
 				if identity matches id
 				_ = log.info(s"maybe $identity for $id")
 				if stratumEndpoints contains driver.hashType
 			} yield id -> identity
+
+			val matches = matchesSeq.groupBy(_._1).map(_._2.head).toMap
 
 			matches foreach { case (id, identity) =>
 				self ! CreateDeviceIdentity(id, identity)

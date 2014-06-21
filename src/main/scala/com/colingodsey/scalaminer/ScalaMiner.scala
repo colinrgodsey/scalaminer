@@ -45,6 +45,7 @@ import com.colingodsey.scalaminer.network.Stratum.Connection
 import scala.Some
 import com.colingodsey.scalaminer.Work
 import com.colingodsey.scalaminer.drivers.bitfury.BitFury
+import com.colingodsey.scalaminer.drivers.gridseed.{DualMiner, GridSeed}
 
 object ScalaMiner {
 	type BufferType = ByteString

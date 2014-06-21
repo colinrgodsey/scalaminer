@@ -40,6 +40,8 @@ trait BufferedReader extends Actor with ActorLogging{
 	def isFTDI: Boolean
 
 	def autoRead = true
+	//TOD: find some static area for these i guess
+	def autoReadBulkId: Int = -99999
 
 	var readingInterface = Set.empty[Interface]
 
@@ -55,7 +57,7 @@ trait BufferedReader extends Actor with ActorLogging{
 		dropBuffer(interface, preBuf.length)
 	}
 
-	def dropBuffer(interface: Interface, len: Int): Int = {
+	def dropBuffer(interface: Interface, len: Int): Int = if(len > 0) {
 		val preBuf = interfaceReadBuffer(interface)
 		val dropped = math.min(len, preBuf.length)
 		interfaceReadBuffers += interface -> preBuf.drop(dropped)
@@ -63,15 +65,17 @@ trait BufferedReader extends Actor with ActorLogging{
 		if(dropped > 0) self ! BufferUpdated(interface)
 
 		dropped
-	}
+	} else 0
 
 	def bufferRead(interface: Interface): Unit = if(!readingInterface(interface)) {
 		readingInterface += interface
 
+		log.info("Starting read..")
+
 		self ! MinerMetrics.DevicePoll
 
 		context.system.scheduler.scheduleOnce(readDelay, deviceRef,
-			ReceiveBulkTransfer(interface, readSize))
+			ReceiveBulkTransfer(interface, readSize, autoReadBulkId))
 	}
 
 	@tailrec final def trimFTDIData(dat: Seq[Byte],
@@ -82,14 +86,15 @@ trait BufferedReader extends Actor with ActorLogging{
 
 	def usbBufferReceive: Receive = {
 		//untagged transfers only
-		case BulkTransferResponse(interface, Right(dat0), -1) =>
+		case BulkTransferResponse(interface, Right(dat0), bulkId) if bulkId == autoReadBulkId =>
 			//log.info("Received " + dat0.length)
 			val buf = interfaceReadBuffer(interface)
 
 			//val dat = if(isFTDI) trimFTDIData(dat0.view) else dat0
-			val dat = if(isFTDI) dat0.drop(2).seq else dat0.seq
+			val dat = if(isFTDI) dat0.view.drop(2) else dat0.seq
 
 			if(!dat.isEmpty) log.debug("Buffering " + dat.length)
+			log.info("Buffering " + dat.length)
 
 			interfaceReadBuffers += interface -> (buf ++ dat)
 			readingInterface -= interface

@@ -40,12 +40,14 @@ object CGMinerAPI {
 	sealed trait CGMinerResponse extends CGMinerCommand {
 		def messageName: String
 		def messageId: Int
-		def data: Option[Map[String, String]]
+		def singleData: Option[Map[String, String]]
+
+		def dataRows: Seq[Map[String, String]] = Nil
 
 		def responseStrings: Seq[String] = {
-			if(data.isDefined) Seq(
+			if(singleData.isDefined) Seq(
 				formatSuccess(messageId, messageName),
-				responseTag + "," + data.get.map {
+				responseTag + "," + singleData.get.map {
 					case (key, value) =>
 						s"$key=$value"
 				}.mkString(",")
@@ -59,7 +61,7 @@ object CGMinerAPI {
 
 	sealed abstract class ACGMinerError(val messageId: Int, val theMsg: String) extends Exception(theMsg) with CGMinerError {
 		def messageName = theMsg
-		def data = None
+		def singleData = None
 		def responseTag = toString
 	}
 
@@ -83,12 +85,61 @@ object CGMinerAPI {
 		}
 	}
 
-	case object DevDetails extends APICommand {
-		def commandId: Int = 9 // ??????
+	case object Asc extends APICommand {
+		def commandId: Int = 9
 		def commandMessage: String = "Device Details"
 
-		case class Response() extends AResponse {
-			val data = None
+		/*
+		STATUS=S,When=1402862004,Code=9,Msg=10 ASC(s),Description=cgminer 4.3.3|ASC=0,Name=BXM,ID=0,
+		Enabled=N,Status=Alive,Temperature=0.00,MHS av=0.00,MHS 5s=0.00,MHS 1m=0.00,MHS 5m=0.00,
+		MHS 15m=0.00,Accepted=0,Rejected=0,Hardware Errors=0,Utility=0.00,Last Share Pool=-1,
+		Last Share Time=0,Total MH=0.0000,Diff1 Work=0,Difficulty Accepted=0.00000000,
+		Difficulty Rejected=0.00000000,Last Share Difficulty=0.00000000,No Device=true,
+		Last Valid Work=1402861378,Device Hardware%=0.0000,Device Rejected%=0.0000,
+		Device Elapsed=621|ASC=1,Name=BXM,ID=1,Enabled=N,Status=Alive,Temperature=0.00,
+		MHS av=0.00,MHS 5s=0.00,MHS 1m=0.00,MHS 5m=0.00,MHS 15m=0.00,Accepted=0,
+		Rejected=0,Hardware Errors=0,Utility=0.00,Last Share Pool=-1,Last Share Time=0,
+		Total MH=0.0000,Diff1 Work=0,Difficulty Accepted=0.00000000,Difficulty Rejected=0.00000000,
+		Last Share Difficulty=0.00000000,No Device=true,Last Valid Work=1402861446,
+		Device Hardware%=0.0000,Device Rejected%=0.0000,Device Elapsed=558
+		 */
+
+		case class Response(idents: Map[Identity, Map[Metric, Counter.Snapshot]]) extends AResponse {
+			def singleData = None
+			override def dataRows = idents.toSeq map { case (ident, snapshot) =>
+				def sumOf(metric: Metric) = snapshot.get(metric) match {
+					case None => 0.0
+					case Some(x) => x.sum
+				}
+
+				def rateOf(metric: Metric) = snapshot.get(metric) match {
+					case None => 0.0
+					case Some(x) => x.rate
+				}
+
+				Map(
+					"ASC" -> (now - snapshot(Hashes).started),
+					"MHS av" -> rateOf(Hashes) / 1000000,
+					"Found Blocks" -> "0",
+					"Getworks" -> sumOf(WorkStarted),
+					"Accepted" -> sumOf(NonceAccepted),
+					"Rejected" -> (sumOf(NonceStale) + sumOf(NonceStratumLow) + sumOf(NonceFail)),
+					"Hardware Errors" -> "0",
+					"Utility" -> "0",
+					"Discarded" -> sumOf(NonceShort),
+					"Stale" -> sumOf(NonceStale),
+					"Get Failures" -> "0",
+					"Local Work" -> "0",
+					"Remote Failures" -> "0",
+					"Network Blocks" -> "512",
+					"Total MH" -> sumOf(Hashes) / 1000000,
+					"Work Utility" -> "0",
+					"Difficulty Accepted" -> sumOf(NonceAccepted),
+					"Difficulty Rejected" -> sumOf(NonceShort),
+					"Difficulty Stale" -> "0.00000000",
+					"Best Share" -> "0"
+				).map(x => x._1 -> x._2.toString)
+			}
 		}
 	}
 
@@ -104,7 +155,7 @@ STATUS=S,When=1399685471,Code=11,Msg=Summary,Description=cgminer 3.3.1|SUMMARY,E
  */
 
 		case class Response(started: Long, snapshotTotal: Map[Metric, Counter.Snapshot]) extends AResponse {
-			val data = Some(Map(
+			val singleData = Some(Map(
 				"Elapsed" -> (now - started),
 				"MHS av" -> rateOf(Hashes) / 1000000,
 				"Found Blocks" -> "0",
@@ -144,14 +195,49 @@ STATUS=S,When=1399685471,Code=11,Msg=Summary,Description=cgminer 3.3.1|SUMMARY,E
 		def commandMessage: String = "ScalaMiner versions"
 
 		case class Response(version: String) extends AResponse {
-			val data = Some(Map(
+			val singleData = Some(Map(
 				"CGMiner" -> version,
 				"API" -> apiVersion
 			))
 		}
 	}
 
-	val cmdSet = Set(Version, Summary, DevDetails)
+	case object DevDetails extends APICommand {
+		def commandId: Int = 69
+		def commandMessage: String = "Device Details"
+
+		case class Response(version: String) extends AResponse {
+			val singleData = Some(Map(
+				"CGMiner" -> version,
+				"API" -> apiVersion
+			))
+		}
+	}
+
+	/*
+	STATUS=S,When=1402865408,Code=78,Msg=CGMiner coin,Description=cgminer 4.3.3|
+	COIN,Hash Method=sha256,Current Block Time=1402864983.050908,
+	Current Block Hash=00000000000000005c3cad291bfb86105e4b7c480f630a2a4752d3277d9624b7,
+	LP=true,Network Difficulty=11756551916.90395164|
+	 */
+	case object Coin extends APICommand {
+		def commandId: Int = 78
+		def commandMessage: String = "ScalaMiner versions"
+
+		case object Response extends AResponse {
+			val singleData = Some(Map(
+				//TODO: need 2 APIs... one for scrypt, one for sha256
+				"Hash Method" -> "sha256",
+				"Current Block Time" -> "1402860000",
+				"Current Block Hash" -> "",
+				"LP" -> "true",
+				"Network Difficulty" -> "",
+				"API" -> apiVersion
+			))
+		}
+	}
+
+	val cmdSet = Set(Version, Summary, DevDetails, Coin, Asc)
 
 	val cmdMap = cmdSet.map(x => x.toString.toLowerCase -> x).toMap
 
@@ -225,20 +311,14 @@ class CGMinerAPI(metricsRef: ActorRef, hashType: ScalaMiner.HashType)
 		case ReceiveCommand(cmd) =>
 			log.info("Received command " + cmd)
 
-			val msg = cmd.toLowerCase.trim match {
-				case x if cmdMap contains x => cmdMap get x
-				case x =>
-					log.warning("Unknown command " + x)
-
-					val err = s"STATUS=E,When=$now,Code=14,Msg=Invalid command," +
-							s"Description=$descriptionTag|"
-
-					sender ! Tcp.Write(ByteString(err))
-
-					None
+			cmd.toLowerCase.trim match {
+				case x if cmdMap contains x =>
+					val msg = cmdMap get x
+					msg.foreach(self.tell(_, sender))
+				case x => respondWith(InvalidCommand)
 			}
 
-			msg.foreach(self.tell(_, sender))
+
 		case Tcp.Bound(_) =>
 			log.info("Listening on " + localAddr)
 		case Tcp.CommandFailed(_: Tcp.Bind) =>
@@ -253,9 +333,8 @@ class CGMinerAPI(metricsRef: ActorRef, hashType: ScalaMiner.HashType)
 			log.info("Connection closed")
 
 		case Version => respondWith(Version.Response(version))
-
+		case Coin => respondWith(Coin.Response)
 		case Summary => respondWith(Summary.Response(started, snapshotTotal))
-
 		case DevDetails =>
 			/*
 			STATUS=S,When=1399691062,Code=69,Msg=Device Details,Description=cgminer 3.3.1|

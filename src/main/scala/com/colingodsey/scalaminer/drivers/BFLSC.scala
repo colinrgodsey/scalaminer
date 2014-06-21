@@ -70,7 +70,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
 	def nonceTimeout = 1.minute
-	def readDelay = latency * 3
+	def readDelay = latency * 1
 	def pollDelay = RES_TIME - readDelay
 	def readSize = BUFSIZ
 	def isFTDI = true
@@ -579,7 +579,7 @@ case object BFLSC extends USBDeviceDriver {
 		val QUE_MAX_RESULTS = 8
 
 		//TODO: figure out if this should really be 512 or 0x1000
-		val BUFSIZ = 0x1000//512 //0x1000
+		val BUFSIZ = 512 //0x1000
 
 		//commands
 		val IDENTIFY = "ZGX"

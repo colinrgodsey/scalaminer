@@ -70,7 +70,7 @@ trait BufferedReader extends Actor with ActorLogging{
 	def bufferRead(interface: Interface): Unit = if(!readingInterface(interface)) {
 		readingInterface += interface
 
-		log.info("Starting read..")
+		//log.info("Starting read..")
 
 		self ! MinerMetrics.DevicePoll
 
@@ -94,7 +94,7 @@ trait BufferedReader extends Actor with ActorLogging{
 			val dat = if(isFTDI) dat0.view.drop(2) else dat0.seq
 
 			if(!dat.isEmpty) log.debug("Buffering " + dat.length)
-			log.info("Buffering " + dat.length)
+			//log.info("Buffering " + dat.length)
 
 			interfaceReadBuffers += interface -> (buf ++ dat)
 			readingInterface -= interface

@@ -140,6 +140,15 @@ class UsbDeviceManager(config: Config)
 		if(config.hasPath(key)) config.getConfig(key)
 		else ConfigFactory.empty
 
+	def nameFor(id: Usb.DeviceId, identity: USBIdentity) =
+		identity.name + "-" + id.portId
+
+	def configFor(name: String, identity: USBIdentity) =
+		optConfigOrBlank(name) withFallback
+				optConfigOrBlank(identity.name.toLowerCase) withFallback
+				optConfigOrBlank(identity.drv.name.toLowerCase) withFallback
+				optConfigOrBlank("device")
+
 	def receive = {
 		case Start =>
 			context watch libUsbHost
@@ -180,12 +189,8 @@ class UsbDeviceManager(config: Config)
 			maybePoll()
 		//got an identity and a device ref
 		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
-			val name = identity.name + "-" + id.portId
-
-			val devConfig = optConfigOrBlank(name) withFallback
-					optConfigOrBlank(identity.name.toLowerCase) withFallback
-					optConfigOrBlank(identity.drv.name.toLowerCase) withFallback
-					optConfigOrBlank("device")
+			val name = nameFor(id, identity)
+			val devConfig = configFor(name, identity)
 
 			val props = identity.usbDeviceActorProps(id, devConfig, stratumEndpoints)
 			val ref = context.actorOf(props, name = name)

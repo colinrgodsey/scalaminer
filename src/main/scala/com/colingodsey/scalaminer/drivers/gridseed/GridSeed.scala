@@ -32,8 +32,61 @@ object GridSeedMiner {
 	case object Start extends Command
 }
 
+trait GridSeedWork { _: Actor with ActorLogging =>
+	def isScrypt: Boolean
+	def isDualIface: Boolean
+	def send(cmds: Seq[Byte]*)
+
+	def scryptInit: Seq[Seq[Byte]]
+	def scryptRestart: Seq[Seq[Byte]]
+
+	var lastJob: Option[Stratum.Job] = None
+
+	def sendWork(job: Stratum.Job) = {
+		val Work(_, data, midstate, target) = job.work
+
+		lastJob = Some(job)
+		self ! MinerMetrics.WorkStarted
+
+		log.debug("getting work")
+
+		val cmd = if(isScrypt) {
+			require(target.length == 32)
+			require(midstate.length == 32)
+			//require(data.length == 80)
+
+			val dat = ScalaMiner.BufferType.empty ++
+					"55aa1f00".fromHex ++
+					target ++ midstate ++ data.take(80) ++
+					Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
+					Seq.fill[Byte](8)(0)
+
+			require(dat.length == 160, dat.length + " != 160")
+
+			dat
+		} else {
+			val obDat = ScalaMiner.BufferType.empty ++ midstate ++ Seq.fill[Byte](20)(0) ++
+					data.drop(64).take(12)
+
+			val dat = ScalaMiner.BufferType.empty ++
+					"55aa0f00".fromHex ++
+					Seq.fill[Byte](4)(0) ++ obDat.take(32) ++
+					obDat.drop(52).take(12)
+
+			require(dat.length == 52, dat.length + " != 52")
+
+			dat
+		}
+
+		if(isScrypt && isDualIface) send(scryptInit: _*)
+		else if(isScrypt) send(scryptRestart: _*)
+
+		send(cmd)
+	}
+}
+
 trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
-		with MetricsWorker with BufferedReader {
+		with MetricsWorker with BufferedReader with GridSeedWork {
 	import GridSeedMiner._
 	import GridSeed.Constants._
 
@@ -43,6 +96,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 	//dual BTC/LTC or just LTC
 	def isDual = false
+	def isDualIface = isDual
 
 	lazy val freq = config getInt "freq"
 	lazy val baud = config getInt "baud"
@@ -57,6 +111,9 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	//def nonceDelay = if(isFTDI) 50.millis else 3.millis
 	def nonceRetry = if(isScrypt) GridSeed.scryptNonceReadTimeout
 	else GridSeed.btcNonceReadTimeout
+
+	def scryptInit: Seq[Seq[Byte]] = dualResetBytes
+	def scryptRestart: Seq[Seq[Byte]] = scryptResetBytes
 
 	//def jobTimeout = 5.minutes
 
@@ -123,7 +180,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 			log.info(s"Configuring to freq $selectedFreq (configd $freq), " +
 					s"baud $baud, chips $nChips, alt-voltage $altVoltage")
 
-			send(intf, frequencyCommands(selectedFreq))
+			//send(intf, frequencyCommands(selectedFreq))
 
 			if(!isDual && altVoltage && fwVersion == 0x01140113) {
 				log.info("Setting alt voltage")
@@ -172,6 +229,9 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		self ! AbstractMiner.CancelWork
 	}
 
+	def send(cmds: Seq[Byte]*): Unit =
+		send(intf, cmds: _*)
+
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
@@ -211,29 +271,10 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 		val workOpt = getWork(true)
 
-		if(workOpt.isDefined) {
-			val job = workOpt.get
-			val work @ Work(ht, data, midstate, target) = job.work
-			val eninfo = extraNonceInfo.get
+		//deviceRef ! Usb.SendBulkTransfer(intf, detectBytes)
 
-			currentJob = Some(job)
-
-			val target1 = ScalaMiner.BufferType.empty ++
-					bintToBytes(difMask, 32).reverse
-
-			val dat = ScalaMiner.BufferType.empty ++
-					"55aa1f00".fromHex ++
-					target1 ++ midstate ++ data.take(80) ++
-					Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
-					"12345678".fromHex
-
-			self ! MinerMetrics.WorkStarted
-
-			send(intf, scryptResetBytes: _*)
-			send(intf, dat)
-
-			startRead()
-		} else log.info("No work yet!")
+		if(workOpt.isDefined) sendWork(workOpt.get)
+		else log.info("No work yet!")
 	}
 
 	def normal: Receive = baseReceive orElse {
@@ -265,7 +306,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 				} else log.info("Unknown msg id " + packet(0))
 			}
 		case x: DeviceResponse =>
-			log.info("Unhandled DeviceResponse " + x)
+			//log.info("Unhandled DeviceResponse " + x)
 	}
 
 	def receive: Receive = {
@@ -556,10 +597,11 @@ object GSConstants {
 	yield "55AAEF0200000000".fromHex.updated(3, (2 + i).toByte).toHex
 
 	val enableSHA2 = "55aaef3020000000"
-	val enableScrypt = "55aa1f2814000000"
+	//val enableScrypt = "55aa1f2814000000" //not sure where this came from...
 	val enableGCP = "55aa1f2817000000"
 	def disableSHA2 = disableSha2ForChip(0) //chip 1
 	val scryptReset = "55AA1F2816000000"
+	def enableScrypt = scryptReset
 
 	//all multi chip, sets 5 chips
 	val commonInitBytes = Seq(
@@ -573,7 +615,8 @@ object GSConstants {
 	val singleInitBytes = commonInitBytes ++ Seq(
 		//enableSHA2, //enable SHA-2, but needed for scrypt?
 		enableScrypt, // Enable Scrypt
-		enableGCP  //enable GCP
+		enableGCP,  //enable GCP
+		"0000000000000000" //seeing this in debug for cgminer... not sure why
 	).map(_.fromHex)
 
 	//called before jobstart for gridseed and dualminer in dual
@@ -581,8 +624,9 @@ object GSConstants {
 		enableGCP).map(_.fromHex)
 
 	//used by init for gridseed, or init for dual mode dualminer
-	val dualInitBytes = commonInitBytes ++ Seq(enableScrypt,
-		enableGCP).map(_.fromHex)
+	/*val dualInitBytes = commonInitBytes ++ Seq(enableScrypt,
+		enableGCP).map(_.fromHex)*/
+	def dualInitBytes = singleInitBytes
 	val dualResetBytes = dualInitBytes
 
 	//TODO: look into gc3355_config_cpm for full freq function

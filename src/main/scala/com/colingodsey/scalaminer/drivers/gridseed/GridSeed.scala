@@ -253,15 +253,13 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		send(cmd)
 		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 
-		startRead()
-
 		context.become(baseReceive orElse {
 			case Usb.BulkTransferResponse(`intf`, Right(buf), `rrId`) =>
 			//case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
 				//val buf = interfaceReadBuffer(intf)
 				//dropBuffer(intf)
 
-				log.info("read buf updated " + buf.length)
+				log.info("read register " + buf.toSeq.toHex)
 
 				unstashAll()
 				context.unbecome()
@@ -279,7 +277,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		require(cmd.length == 16)
 
 		send(cmd)
-		//deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
+		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rwId)
 	}
 
 	def sendWork() {
@@ -290,8 +288,6 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		if(workOpt.isDefined) {
 			val job = workOpt.get
 			sendWork(job)
-
-			require(isScrypt)
 		}
 	}
 

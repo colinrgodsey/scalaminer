@@ -137,6 +137,8 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	var hasRead = false
 	//var currentJob: Option[Stratum.Job] = None
 
+	override def autoRead = false
+
 	implicit def ec = context.system.dispatcher
 
 	case object ResetPause
@@ -171,17 +173,20 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 			if(!isDual && altVoltage && fwVersion == 0x01140113) {
 				log.info("Setting alt voltage")
 				readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
-					val i = getInts(dat)(0)
+					val i = getInts(dat.reverse)(0)
 
 					val value = (i & 0xff0fffff) | 0x00300000
+
+					log.info("writing CRL_OFFSET")
 
 					writeRegister(GPIOA_BASE + CRL_OFFSET, value)
 
 					// Set GPIOA pin 5 high.
 					readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
-						val i2 = getInts(dat2)(0)
+						val i2 = getInts(dat2.reverse)(0)
 						val value2 = i2 | 0x00000020
 						writeRegister(GPIOA_BASE + ODR_OFFSET, value2)
+						log.info("writing ODR_OFFSET")
 
 						detected()
 					}
@@ -192,7 +197,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 				failDetect()
 			} else detected()
 		case Usb.BulkTransferResponse(`intf`, _, `detectId`) =>
-			log.info("starting buffer")
+			//log.info("starting buffer")
 			bufferRead(intf)
 		case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
 			val buf = interfaceReadBuffer(intf)
@@ -240,21 +245,27 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
-		val cmd = "55aac001".fromHex ++ intToBytes(addr) ++
-				intToBytes(regSize) ++ intToBytes(regSize)
+		val cmd = "55aac001".fromHex ++ intToBytes(addr).reverse ++
+				intToBytes(regSize).reverse ++ intToBytes(regSize).reverse
 
 		require(cmd.length == 16)
 
-		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
+		send(cmd)
 		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 
+		startRead()
+
 		context.become(baseReceive orElse {
-			case Usb.BulkTransferResponse(`intf`, Right(dat), `rrId`) =>
+			case Usb.BulkTransferResponse(`intf`, Right(buf), `rrId`) =>
+			//case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
+				//val buf = interfaceReadBuffer(intf)
+				//dropBuffer(intf)
+
+				log.info("read buf updated " + buf.length)
+
 				unstashAll()
 				context.unbecome()
-				recv(dat)
-			case Usb.BulkTransferResponse(`intf`, _, `rrId`) =>
-				sys.error("Failed read register (unknown)!")
+				recv(buf)
 			case NonTerminated(_) => stash()
 		}, false)
 	}
@@ -262,13 +273,13 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def writeRegister(addr: Int, value: Int) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
-		val cmd = "55aac002".fromHex ++ intToBytes(addr) ++
-				intToBytes(value) ++ intToBytes(regSize)
+		val cmd = "55aac002".fromHex ++ intToBytes(addr).reverse ++
+				intToBytes(value).reverse ++ intToBytes(regSize).reverse
 
 		require(cmd.length == 16)
 
-		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
-		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
+		send(cmd)
+		//deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 	}
 
 	def sendWork() {
@@ -476,7 +487,7 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
-		override def irpDelay = 2.millis
+		override def irpDelay = 20.millis
 		//override def irpTimeout = 3.seconds
 
 		def isMultiCoin = true

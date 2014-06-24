@@ -56,13 +56,6 @@ trait GridSeedWork { _: Actor with ActorLogging =>
 			require(midstate.length == 32)
 			//require(data.length == 80)
 
-			/*
-			"55aa1f00".fromHex ++
-					target ++ midstate ++ data.take(80) ++
-					Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
-					"12345678".fromHex
-			 */
-
 			val dat = ScalaMiner.BufferType.empty ++
 					"55aa1f00".fromHex ++
 					target ++ midstate ++ data.take(80) ++
@@ -113,8 +106,6 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	lazy val nChips = config getInt "chips"
 	lazy val altVoltage = config getBoolean "voltage" //hacked miners only
 
-	lazy val selectedFreq = getFreqFor(freq)
-
 	//override def defaultTimeout = 10000.millis
 
 	def nonceTimeout = nonceRetry * 4
@@ -158,8 +149,13 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 	def detecting: Receive = baseReceive orElse {
 		case Usb.BulkTransferResponse(`intf`, _, `chipResetId`) =>
-			context.system.scheduler.scheduleOnce(200.millis, self, ResetPause)
+			context.system.scheduler.scheduleOnce(500.millis, self, ResetPause)
 		case ResetPause =>
+			val (freqCmd, selFreq) = getFreqCommand(freq)
+
+			log.info(s"Configuring to freq $selFreq (confd $freq), " +
+					s"baud $baud, chips $nChips, alt-voltage $altVoltage, freqCmd ${freqCmd.toHex}")
+
 			if(isDual) {
 				send(intf, dualInitBytes: _*)
 				send(intf, dualResetBytes: _*)
@@ -168,18 +164,18 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 				send(intf, scryptResetBytes: _*)
 			}
 
-			send(intf, frequencyCommands(selectedFreq))
+			send(intf, freqCmd)
 
 			if(!isDual && altVoltage && fwVersion == 0x01140113) {
 				log.info("Setting alt voltage")
 				readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
 					val i = getInts(dat.reverse)(0)
 
-					val value = (i & 0xff0fffff) | 0x00300000
+					val value = (i & 0xff0fffffL) | 0x00300000
 
 					log.info("writing CRL_OFFSET")
 
-					writeRegister(GPIOA_BASE + CRL_OFFSET, value)
+					writeRegister(GPIOA_BASE + CRL_OFFSET, value.toInt)
 
 					// Set GPIOA pin 5 high.
 					readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
@@ -232,14 +228,12 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def detected() {
 		log.info("Detected!! ")
 
-		sendWork()
-
 		finishedInit = true
 		context become normal
 		unstashAll()
-		bufferRead(intf)
 
-		self ! AbstractMiner.CancelWork
+		//self ! AbstractMiner.CancelWork
+		context.system.scheduler.scheduleOnce(200.millis, self, AbstractMiner.CancelWork)
 	}
 
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
@@ -381,7 +375,7 @@ class GridSeedSGSMiner(val deviceId: Usb.DeviceId, val config: Config,
 
 	def identity: USBIdentity = GSD
 	def hashType = ScalaMiner.Scrypt
-	def readDelay = 20.millis
+	def readDelay = 2.millis
 	def readSize = 0x2000//12 // ?
 
 	override def isFTDI = false
@@ -483,7 +477,7 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
-		override def irpDelay = 20.millis
+		override def irpDelay = GSConstants.COMMAND_DELAY
 		//override def irpTimeout = 3.seconds
 
 		def isMultiCoin = true
@@ -576,13 +570,12 @@ object GSConstants {
 	val DEFAULT_USEFIFO = 0
 	val DEFAULT_BTCORE = 16
 
-	val COMMAND_DELAY = 20
+	val COMMAND_DELAY = 20.millis
 	val READ_SIZE = 12
 	val MCU_QUEUE_LEN = 0
 	val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN + 2)
 	val READBUF_SIZE = 8192
 	val HASH_SPEED = 0.0851128926.millis
-	// in ms
 	val F_IN = 25 // input frequency
 
 	val PROXY_PORT = 3350
@@ -599,18 +592,18 @@ object GSConstants {
 	val detectRespBytes = "55aac00090909090".fromHex
 	
 	//val resetChips = "55AAC000808080800000000001000000".fromHex
-	val resetChips = "55aac000e0e0e0e00000000001000000".fromHex
+	val resetChips = "55aac000e0e0e0e00000000001000000".fromHex //from GC3355_USB_Protocol_V1.1_EN.pdf
 
 	//used just for dualminer? sha chip gating
 	val disableSha2ForChip = for(i <- 0 until DEFAULT_CHIPS)
 	yield "55AAEF0200000000".fromHex.updated(3, (2 + i).toByte).toHex
 
 	val enableSHA2 = "55aaef3020000000"
-	//val enableScrypt = "55aa1f2814000000" //not sure where this came from...
+	val enableScrypt = "55aa1f2814000000" //not sure where this came from...
 	val enableGCP = "55aa1f2817000000"
 	def disableSHA2 = disableSha2ForChip(0) //chip 1
 	val scryptReset = "55AA1F2816000000"
-	def enableScrypt = scryptReset
+	//def enableScrypt = scryptReset
 
 	//all multi chip, sets 5 chips
 	val commonInitBytes = Seq(
@@ -652,12 +645,33 @@ object GSConstants {
 
 	lazy val frequencyCommands = (freqNumbers zip binFrequency).toMap
 
-	def getFreqFor(freq: Int) = {
+	def getFreqCommandTable(freq: Int) = {
 		val closest = freqNumbers.map(x =>
 			x -> math.abs(x - freq)).sortBy(_._2).head._1
 
-		closest
+		(frequencyCommands(closest), closest)
 	}
+
+	def getFreqCommandCalc(freq: Int, pll_f0: Int = 0, pll_r: Int = 0, pll_od: Int = 0) = {
+		val pll_f = if(pll_r == 0 && pll_f0 == 0 && pll_od == 0) {
+			// Support frequency increments of 25.
+			val x = freq / F_IN - 1
+			math.max(0, math.min(127, x))
+		} else 0
+
+		val f_ref = F_IN / (pll_r + 1)
+		val f_vco = f_ref * (pll_f + 1)
+		val f_out = f_vco / (1 << pll_od)
+		val pll_bs = if(f_out >= 500) 1 else 0
+		val cfg_pm = 1
+		val pll_clk_gate = 1
+		val cmd = (cfg_pm << 0) | (pll_clk_gate << 2) | (pll_r << 16) |
+				(pll_f << 21) | (pll_od << 28) | (pll_bs << 31)
+
+		("55aaef00".fromHex ++ intToBytes(cmd).reverse, f_out)
+	}
+
+	def getFreqCommand = getFreqCommandCalc(_: Int, 0, 0, 0)
 
 	val binFrequency = Seq(
 		"55aaef0005006083",

@@ -19,17 +19,18 @@ import java.io.{File, ByteArrayOutputStream, DataOutputStream}
 import akka.actor._
 import akka.pattern._
 import com.colingodsey.scalaminer.usb._
+import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.drivers._
 import akka.io.{ IO, Tcp }
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
-import com.colingodsey.scalaminer.network.{Stratum, StratumProxy, StratumActor}
+import com.colingodsey.scalaminer.network.Stratum.Connection
+import com.colingodsey.scalaminer.network.{StratumPool, Stratum, StratumProxy, StratumActor}
 import spray.can.Http
 import akka.util.{Timeout, ByteString}
 import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsActor}
-import com.typesafe.config.{Config, ConfigFactory}
+import com.typesafe.config._
 import java.util.concurrent._
 import java.util
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
+import com.colingodsey.scalaminer.network.Stratum.Connection
 import scala.Some
 import com.colingodsey.scalaminer.Work
 import scala.concurrent.duration.TimeUnit
@@ -37,9 +38,14 @@ import scala.util.{Failure, Success}
 import scala.concurrent.Await
 import com.colingodsey.io.usb.Usb
 import com.colingodsey.scalaminer.api.CGMinerAPI
-import com.colingodsey.scalaminer.network.Stratum.StratumConnection
+import com.colingodsey.scalaminer.network.Stratum.Connection
 import scala.Some
 import com.colingodsey.scalaminer.Work
+import com.colingodsey.scalaminer.network.Stratum.Connection
+import scala.Some
+import com.colingodsey.scalaminer.Work
+import com.colingodsey.scalaminer.drivers.bitfury.BitFury
+import com.colingodsey.scalaminer.drivers.gridseed.{DualMiner, GridSeed}
 
 object ScalaMiner {
 	type BufferType = ByteString
@@ -66,11 +72,19 @@ object ScalaMinerMain extends App {
 	val usbDrivers: Set[USBDeviceDriver] = Set(DualMiner, BFLSC,
 		GridSeed, BitMain, Icarus, BitFury)
 
-	def readStConn(cfg: Config) = {
-		if(cfg.hasPath("host")) {
-			StratumConnection(cfg getString "host", cfg getInt "port",
-				cfg getString "user", cfg getString "pass")
-		} else ??? //TODO: implement parsing for multiple stratums
+	def intOrOne(cfg: Config, key: String) = if(cfg hasPath key) cfg getInt key
+	else 1
+
+	def readStConns(cfgVal: ConfigValue): Seq[Connection] = cfgVal match {
+		case cfg0: ConfigObject =>
+			val cfg = cfg0.toConfig
+			Seq(Connection(cfg getString "host", cfg getInt "port",
+				cfg getString "user", cfg getString "pass",
+				priority = intOrOne(cfg, "priority"),
+				weight = intOrOne(cfg, "weight")))
+		case x: ConfigList =>
+			x.toSeq flatMap readStConns
+		case _ => sys.error(s"bad connection cfg (${cfgVal.origin()}}) " + cfgVal)
 	}
 
 	val metricsRef = system.actorOf(Props[MetricsActor], name = "metrics")
@@ -94,18 +108,22 @@ object ScalaMinerMain extends App {
 	} else None
 
 	if(smConfig.hasPath("stratum.scrypt")) {
-		val conn = readStConn(smConfig getConfig "stratum.scrypt")
-		val connRef = system.actorOf(Props(classOf[StratumActor],
-			conn, ScalaMiner.Scrypt), name = "stratum-scrypt")
+		val conns = readStConns(smConfig getValue "stratum.scrypt")
+		val connRef = system.actorOf(Props(classOf[StratumPool],
+			ScalaMiner.Scrypt), name = "stratum-scrypt")
+
+		conns.foreach(connRef ! StratumPool.AddConnection(_))
 
 		if(usbDeviceManager.isDefined)
 			usbDeviceManager.get ! UsbDeviceManager.AddStratumRef(ScalaMiner.Scrypt, connRef)
 	}
 
 	if(smConfig.hasPath("stratum.sha256")) {
-		val conn = readStConn(smConfig getConfig "stratum.sha256")
-		val connRef = system.actorOf(Props(classOf[StratumActor],
-			conn, ScalaMiner.SHA256), name = "stratum-sha256")
+		val conns = readStConns(smConfig getValue "stratum.sha256")
+		val connRef = system.actorOf(Props(classOf[StratumPool],
+			ScalaMiner.SHA256), name = "stratum-sha256")
+
+		conns.foreach(connRef ! StratumPool.AddConnection(_))
 
 		if(usbDeviceManager.isDefined)
 			usbDeviceManager.get ! UsbDeviceManager.AddStratumRef(ScalaMiner.SHA256, connRef)
@@ -129,6 +147,20 @@ object ScalaMinerMain extends App {
 		system.awaitTermination(15.seconds)
 		println("Shut down")
 	}
+
+	val fs = for(i <- 0 until 150) yield {
+		val f = 225 + 25 * i
+		val clamped = Icarus.getAntMinerFreq(f).toInt
+
+		val cmdBufPre = Vector[Int](2 | 0x80, (clamped & 0xff00) >> 8,
+			clamped & 0x00ff).map(_.toByte)
+		//val hex = cmdBufPre.toHex
+		val hex = intToBytes(clamped).toHex
+
+		s"${f}, $hex"
+	}
+
+	//println(fs.mkString("\n"))
 }
 
 object MinerDriver {
@@ -138,6 +170,8 @@ object MinerDriver {
 //should be a case object
 trait MinerDriver {
 	def identities: Set[_ <: MinerIdentity]
+
+	def submitsAtDifficulty = false
 }
 
 //should be a case object

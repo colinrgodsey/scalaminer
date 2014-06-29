@@ -28,9 +28,9 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 	def maxUsbQueueSize = 500
 	//TODO: this needs to be configurable, dynamic or otherwise
-	val irpTimeout = 2.minutes//100.millis
+	var irpTimeout = 100.millis
 	//TODO: this probably should never be here... or be configurable
-	val irpDelay = 2.millis
+	var irpDelay = 2.millis
 
 	var claimedInterfaces = Set.empty[Int]
 	var endpointQueues = Map.empty[Endpoint, mutable.Queue[(IrpRequest, ActorRef)]]
@@ -107,6 +107,8 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		//log.info("Starting bulk transfer " + irpReq)
 
+		//if(!irpReq.isRead) log.info("sending " + dat.toHex)
+
 		if(!claimedInterfaces(inf)) {
 			log.debug("Claiming interface " + inf)
 
@@ -166,6 +168,8 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		case SetConfiguration(config) =>
 			LibUsb.setConfiguration(handle, config)
+		case SetIrpTimeout(dur) => irpTimeout = dur
+		case SetIrpDelay(delay) => irpDelay = delay
 	}
 
 	override def preStart() {

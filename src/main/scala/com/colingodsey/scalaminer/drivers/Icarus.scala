@@ -5,6 +5,7 @@
  * https://github.com/colinrgodsey/scalaminer
  *
  * Copyright 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2011-2014 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -26,6 +27,11 @@ import com.colingodsey.scalaminer.metrics.{MinerMetrics, MetricsWorker}
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 import com.colingodsey.scalaminer.network.Stratum
+import com.typesafe.config.Config
+import com.colingodsey.scalaminer.usb.FTDI._
+import com.colingodsey.scalaminer.Nonce
+import scala.Some
+import com.colingodsey.scalaminer.Work
 
 trait Icarus extends UsbDeviceActor with AbstractMiner
 		with MetricsWorker with BufferedReader  {
@@ -45,8 +51,9 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 	def baud = 115200
 	def readDelay = 10.millis//75.millis
-	def readSize = 64 //512 //NOTE: I feel like this really is always 512.. right?
-	def nonceTimeout = identity.timeout //probably identity timeout
+	def readSize = identity.interfaces.head.output.size //64
+	def nonceTimeout = identity.timeout
+	def nonceRestart = 11.seconds
 	def hashType = ScalaMiner.SHA256
 	def isFTDI = false
 
@@ -97,6 +104,8 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 		send(intf, buf)
 
+		log.debug("Submitting work")
+
 		lastJob = Some(job)
 	}
 
@@ -108,12 +117,13 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 				val nonce = buf.take(4)
 				dropBuffer(intf, buf.length)
 
-				//log.info("nonce " + nonce)
+				log.debug("nonce " + nonce.toHex)
 
 				if(!finishedInit) {
 					require(nonce == goldenNonce, s"$nonce == $goldenNonce")
 
 					finishedInit = true
+					log.info("Golden nonce detected!")
 
 					self ! StartWork
 
@@ -121,6 +131,7 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 					unstashAll()
 				} else lastJob match {
 					case Some(Stratum.Job(work, id, merk, en2, _)) =>
+						log.debug("Send nonce " + nonce.reverse.toHex)
 						self ! Nonce(work, nonce.reverse, en2)
 						self ! StartWork
 					case _ =>
@@ -134,6 +145,9 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 
 		stratumSubscribe(stratumRef)
 
+		context.system.scheduler.schedule(4.seconds, nonceRestart,
+			self, AbstractMiner.CancelWork)
+
 		getDevice {
 			doInit()
 		}
@@ -141,17 +155,18 @@ trait Icarus extends UsbDeviceActor with AbstractMiner
 }
 
 class ANUAMUDevice(val deviceId: Usb.DeviceId,
-		val workRefs: Map[ScalaMiner.HashType, ActorRef],
-		isANU: Boolean) extends Icarus {
+		val identity: USBIdentity,
+		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends Icarus {
 	import Icarus._
 	import Constants._
 	import CP210X._
 
-	def identity = AMU
 	def workDivision: Int = 1
 	def chipCount: Int = 1
 
 	def freq = 200 //can change
+
+	def isANU = identity == ANU
 
 	lazy val clampedFreq = getAntMinerFreq(freq).toInt
 
@@ -161,6 +176,8 @@ class ANUAMUDevice(val deviceId: Usb.DeviceId,
 	object GetGolden
 
 	def doInit() {
+		bufferRead(intf)
+
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_IFC_ENABLE,
 			VALUE_UART_ENABLE, intf.interface).send
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_DATA,
@@ -189,7 +206,7 @@ class ANUAMUDevice(val deviceId: Usb.DeviceId,
 			context.system.scheduler.scheduleOnce(50.millis, self, GetGolden)
 			//context.system.scheduler.scheduleOnce(100.millis, self, GetGolden)
 
-			bufferRead(intf)
+			dropBuffer(intf)
 
 			if(isANU) sendANUFreq()
 		case GetGolden => detect()
@@ -250,7 +267,7 @@ case object Icarus extends USBDeviceDriver {
 		def iManufacturer = ""
 		def iProduct = ""
 		def config = 1
-		def timeout = 1.second //???? work timeout?
+		def timeout = 2.minutes
 
 		val interfaces = Set(
 			Usb.Interface(0, Set(
@@ -259,9 +276,9 @@ case object Icarus extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[ANUAMUDevice], device, workRefs, true)
+			Props(classOf[ANUAMUDevice], device, ANU, workRefs)
 	}
 
 	//u2?
@@ -274,7 +291,7 @@ case object Icarus extends USBDeviceDriver {
 		def iManufacturer = ""
 		def iProduct = ""
 		def config = 1
-		def timeout = 1.second //???? work timeout?
+		def timeout = 2.minutes
 
 		val interfaces = Set(
 			Usb.Interface(0, Set(
@@ -283,9 +300,9 @@ case object Icarus extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[ANUAMUDevice], device, workRefs, false)
+			Props(classOf[ANUAMUDevice], device, AMU, workRefs)
 	}
 
 	object Constants {
@@ -299,9 +316,10 @@ case object Icarus extends USBDeviceDriver {
 		val goldenNonce = "000187a2".fromHex
 	}
 
-	def getAntMinerFreq(freq: Double) = {
-		var bestDiff = 1000.0
+	def getAntMinerFreq(freq: Float) = {
+		var bestDiff = 1000.0f
 		var bestOut = freq
+		var bestFreq: Int = -1
 		var exactFound = false
 
 		for {
@@ -311,22 +329,23 @@ case object Icarus extends USBDeviceDriver {
 			nr = n + 1
 			m <- 0 until 64
 			nf = m + 1
-			fout = 25.0 * nf / (nr * no)
-			if math.abs(fout - freq) <= bestDiff
+			fout = 25.0f * nf / (nr * no)
+			diff = math.abs(fout - freq)
+			if diff < bestDiff
 			if !exactFound
+			bs = if(500 <= (fout * no) && (fout * no) <= 1000) 1 else 0
+			realVal = (bs << 14) | (m << 7) | (n << 2) | od
 		} {
-			val bs = if(500 <= (fout * no) && (fout * no) <= 1000) 1 else 0
-			bestDiff = math.abs(fout - freq)
+			bestDiff = diff
 			bestOut = fout
+			bestFreq = realVal
 
-			val freqVal = (bs << 14) | (m << 7) | (n << 2) | od;
-
-			if(freqVal == fout) {
+			if(freq == fout) {
 				exactFound = true
 				bestOut = fout
 			}
 		}
 
-		bestOut
+		bestFreq
 	}
 }

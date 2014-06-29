@@ -23,6 +23,7 @@ import com.colingodsey.scalaminer.utils.CRC16
 import akka.util.ByteString
 import com.colingodsey.scalaminer.metrics.MetricsWorker
 import com.colingodsey.scalaminer.ScalaMiner.HashType
+import com.typesafe.config.Config
 
 class BitMain(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef])
@@ -88,7 +89,7 @@ case object BitMain extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BitMain], device, workRefs)
 	}

@@ -19,6 +19,7 @@ import scala.collection.JavaConversions._
 import org.usb4java.LibUsb
 import com.typesafe.config.Config
 import akka.io.SelectionHandlerSettings
+import scala.concurrent.duration.FiniteDuration
 
 object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	case class ControlIrp(requestType: Byte, request: Byte,
@@ -31,6 +32,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 			desc.product.toInt).map(intToBytes(_).drop(2).toHex).mkString("-")
 
 		lazy val portId = Seq(bus, address, port).map(intToBytes(_).drop(3).toHex).mkString("-")
+		//lazy val portId = Seq(bus, port).map(intToBytes(_).drop(3).toHex).mkString("-")
 
 		override def toString = s"DeviceId($idKey)"
 	}
@@ -76,6 +78,8 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	}
 
 	case class SetConfiguration(config: Int) extends DeviceRequest
+	case class SetIrpTimeout(timeout: FiniteDuration) extends DeviceRequest
+	case class SetIrpDelay(timeout: FiniteDuration) extends DeviceRequest
 
 	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
 		def interface = ControlInterface

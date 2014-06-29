@@ -11,7 +11,7 @@
  * any later version.  See COPYING for more details.
  */
 
-package com.colingodsey.scalaminer.drivers
+package com.colingodsey.scalaminer.drivers.gridseed
 
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
@@ -19,11 +19,12 @@ import com.colingodsey.scalaminer._
 import scala.concurrent.duration._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.network.Stratum
-import akka.util.ByteString
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
-import com.colingodsey.io.usb.Usb.DeviceId
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+import com.typesafe.config.Config
+import com.colingodsey.scalaminer.drivers.AbstractMiner
+import com.colingodsey.io.usb.Usb.DeviceResponse
 
 object GridSeedMiner {
 	sealed trait Command
@@ -31,31 +32,88 @@ object GridSeedMiner {
 	case object Start extends Command
 }
 
+trait GridSeedWork { _: Actor with ActorLogging =>
+	def isScrypt: Boolean
+	def isDualIface: Boolean
+	def send(cmds: Seq[Byte]*)
+
+	def startRead()
+	def scryptInit: Seq[Seq[Byte]]
+	def scryptRestart: Seq[Seq[Byte]]
+
+	var lastJob: Option[Stratum.Job] = None
+
+	def sendWork(job: Stratum.Job) = {
+		val Work(_, data, midstate, target) = job.work
+
+		lastJob = Some(job)
+		self ! MinerMetrics.WorkStarted
+
+		log.debug("getting work")
+
+		val cmd = if(isScrypt) {
+			require(target.length == 32)
+			require(midstate.length == 32)
+			//require(data.length == 80)
+
+			val dat = ScalaMiner.BufferType.empty ++
+					"55aa1f00".fromHex ++
+					target ++ midstate ++ data.take(80) ++
+					Seq.fill(4)(0xFF.toByte) ++
+					"12345678".fromHex//Seq.fill[Byte](8)(0) //0 for 8 for dualminer?
+
+			//require(dat.length == 160, dat.length + " != 160")
+
+			dat
+		} else {
+			val obDat = ScalaMiner.BufferType.empty ++ midstate ++ Seq.fill[Byte](20)(0) ++
+					data.drop(64).take(12)
+
+			val dat = ScalaMiner.BufferType.empty ++
+					"55aa0f00".fromHex ++
+					Seq.fill[Byte](4)(0) ++ obDat.take(32) ++
+					obDat.drop(52).take(12)
+
+			require(dat.length == 52, dat.length + " != 52")
+
+			dat
+		}
+
+		if(isScrypt && isDualIface) send(scryptInit: _*)
+		else if(isScrypt) send(scryptRestart: _*)
+
+		send(cmd)
+
+		startRead()
+	}
+}
+
 trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
-		with MetricsWorker with BufferedReader {
+		with MetricsWorker with BufferedReader with GridSeedWork {
 	import GridSeedMiner._
 	import GridSeed.Constants._
 
 	def doInit()
 	def identity: USBIdentity
+	def config: Config
 
 	//dual BTC/LTC or just LTC
 	def isDual = false
+	def isDualIface = isDual
 
-	def freq = DEFAULT_FREQUENCY
-	def baud = DEFAULT_BAUD
-	def nChips = DEFAULT_CHIPS
-
-	lazy val selectedFreq = getFreqFor(freq)
+	lazy val freq = config getInt "freq"
+	lazy val baud = config getInt "baud"
+	lazy val nChips = config getInt "chips"
+	lazy val altVoltage = config getBoolean "voltage" //hacked miners only
 
 	//override def defaultTimeout = 10000.millis
 
-	def nonceTimeout = if(isScrypt) GridSeed.scryptNonceReadTimeout
+	def nonceTimeout = nonceRetry * 4
+	//def nonceDelay = if(isFTDI) 50.millis else 3.millis
+	def nonceRetry = if(isScrypt) GridSeed.scryptNonceReadTimeout
 	else GridSeed.btcNonceReadTimeout
-	def nonceDelay = if(isFTDI) 50.millis else 3.millis
 
 	def jobTimeout = 5.minutes
-	def altVoltage = false //hacked miners only
 
 	val pollDelay = 10.millis
 	val maxWorkQueue = 15
@@ -68,7 +126,9 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	var fwVersion = -1
 	var readStarted = false
 	var hasRead = false
-	var currentJob: Option[Stratum.Job] = None
+	//var currentJob: Option[Stratum.Job] = None
+
+	override def autoRead = false
 
 	implicit def ec = context.system.dispatcher
 
@@ -79,36 +139,50 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		bufferRead(intf)
 	}
 
+	def send(cmds: Seq[Byte]*): Unit =
+		send(intf, cmds: _*)
+
+	def scryptInit: Seq[Seq[Byte]] = dualResetBytes
+	def scryptRestart: Seq[Seq[Byte]] = scryptResetBytes
+
 	def baseReceive: Receive = metricsReceive orElse usbBufferReceive orElse workReceive
 
 	def detecting: Receive = baseReceive orElse {
 		case Usb.BulkTransferResponse(`intf`, _, `chipResetId`) =>
-			context.system.scheduler.scheduleOnce(200.millis, self, ResetPause)
+			context.system.scheduler.scheduleOnce(500.millis, self, ResetPause)
 		case ResetPause =>
+			val (freqCmd, selFreq) = getFreqCommand(freq)
+
+			log.info(s"Configuring to freq $selFreq (confd $freq), " +
+					s"baud $baud, chips $nChips, alt-voltage $altVoltage, freqCmd ${freqCmd.toHex}")
+
 			if(isDual) {
 				send(intf, dualInitBytes: _*)
 				send(intf, dualResetBytes: _*)
 			} else {
 				send(intf, singleInitBytes: _*)
-				send(intf, singleResetBytes: _*)
+				send(intf, scryptResetBytes: _*)
 			}
 
-			send(intf, frequencyCommands(selectedFreq))
+			send(intf, freqCmd)
 
 			if(!isDual && altVoltage && fwVersion == 0x01140113) {
 				log.info("Setting alt voltage")
 				readRegister(GPIOA_BASE + CRL_OFFSET) { dat =>
-					val i = getInts(dat)(0)
+					val i = getInts(dat.reverse)(0)
 
-					val value = (i & 0xff0fffff) | 0x00300000
+					val value = (i & 0xff0fffffL) | 0x00300000
 
-					writeRegister(GPIOA_BASE + CRL_OFFSET, value)
+					log.info("writing CRL_OFFSET")
+
+					writeRegister(GPIOA_BASE + CRL_OFFSET, value.toInt)
 
 					// Set GPIOA pin 5 high.
 					readRegister(GPIOA_BASE + ODR_OFFSET) { dat2 =>
-						val i2 = getInts(dat2)(0)
+						val i2 = getInts(dat2.reverse)(0)
 						val value2 = i2 | 0x00000020
 						writeRegister(GPIOA_BASE + ODR_OFFSET, value2)
+						log.info("writing ODR_OFFSET")
 
 						detected()
 					}
@@ -119,7 +193,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 				failDetect()
 			} else detected()
 		case Usb.BulkTransferResponse(`intf`, _, `detectId`) =>
-			log.info("starting buffer")
+			//log.info("starting buffer")
 			bufferRead(intf)
 		case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
 			val buf = interfaceReadBuffer(intf)
@@ -137,7 +211,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 					log.info("Grid seed detected! Version " + bVersion.toHex)
 
-					deviceRef ! Usb.SendBulkTransfer(intf, chipResetBytes, chipResetId)
+					deviceRef ! Usb.SendBulkTransfer(intf, resetChips, chipResetId)
 				}
 			}
 		case NonTerminated(_) => stash()
@@ -145,41 +219,50 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 	def detect() {
 		context become detecting
-		send(intf, chipResetBytes)
-		deviceRef ! Usb.SendBulkTransfer(intf, detectBytes, detectId)
+		send(intf, resetChips)
+		//send(intf, resetChips)
+		context.system.scheduler.scheduleOnce(100.millis,
+			deviceRef, Usb.SendBulkTransfer(intf, resetChips))
+		//deviceRef ! Usb.SendBulkTransfer(intf, detectBytes, detectId)
+		context.system.scheduler.scheduleOnce(200.millis, deviceRef,
+			Usb.SendBulkTransfer(intf, detectBytes, detectId))
+		context.system.scheduler.scheduleOnce(300.millis, deviceRef,
+			Usb.SendBulkTransfer(intf, detectBytes, detectId))
 	}
 
 	def detected() {
 		log.info("Detected!! ")
 
-		sendWork()
-
 		finishedInit = true
 		context become normal
 		unstashAll()
-		bufferRead(intf)
 
-		self ! AbstractMiner.CancelWork
+		//self ! AbstractMiner.CancelWork
+		context.system.scheduler.scheduleOnce(200.millis, self, AbstractMiner.CancelWork)
 	}
 
 	def readRegister(addr: Int)(recv: Seq[Byte] => Unit) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
-		val cmd = "55aac001".fromHex ++ intToBytes(addr) ++
-				intToBytes(regSize) ++ intToBytes(regSize)
+		val cmd = "55aac001".fromHex ++ intToBytes(addr).reverse ++
+				intToBytes(regSize).reverse ++ intToBytes(regSize).reverse
 
 		require(cmd.length == 16)
 
-		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
+		send(cmd)
 		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
 
 		context.become(baseReceive orElse {
-			case Usb.BulkTransferResponse(`intf`, Right(dat), `rrId`) =>
+			case Usb.BulkTransferResponse(`intf`, Right(buf), `rrId`) =>
+			//case BufferedReader.BufferUpdated(`intf`) if fwVersion == -1 =>
+				//val buf = interfaceReadBuffer(intf)
+				//dropBuffer(intf)
+
+				log.info("read register " + buf.toSeq.toHex)
+
 				unstashAll()
 				context.unbecome()
-				recv(dat)
-			case Usb.BulkTransferResponse(`intf`, _, `rrId`) =>
-				sys.error("Failed read register (unknown)!")
+				recv(buf)
 			case NonTerminated(_) => stash()
 		}, false)
 	}
@@ -187,13 +270,13 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def writeRegister(addr: Int, value: Int) {
 		require(fwVersion == 0x01140113, "Incompatible firmware " + fwVersion)
 
-		val cmd = "55aac002".fromHex ++ intToBytes(addr) ++
-				intToBytes(value) ++ intToBytes(regSize)
+		val cmd = "55aac002".fromHex ++ intToBytes(addr).reverse ++
+				intToBytes(value).reverse ++ intToBytes(regSize).reverse
 
 		require(cmd.length == 16)
 
-		deviceRef ! Usb.SendBulkTransfer(intf, cmd)
-		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rrId)
+		send(cmd)
+		deviceRef ! Usb.ReceiveBulkTransfer(intf, regSize, rwId)
 	}
 
 	def sendWork() {
@@ -203,23 +286,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 
 		if(workOpt.isDefined) {
 			val job = workOpt.get
-			val work @ Work(ht, data, midstate, target) = job.work
-			val eninfo = extraNonceInfo.get
-
-			currentJob = Some(job)
-
-			val dat = ScalaMiner.BufferType.empty ++
-					"55aa1f00".fromHex ++
-					target ++ midstate ++ data.take(80) ++
-					Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
-					"12345678".fromHex
-
-			self ! MinerMetrics.WorkStarted
-
-			send(intf, singleResetBytes: _*)
-			send(intf, dat)
-
-			startRead()
+			sendWork(job)
 		}
 	}
 
@@ -240,8 +307,8 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 					val iNonce = BigInt((0.toByte +: nonce).toArray)
 					val chip = (iNonce / BigInt(0xffffffffL) * nChips).toInt
 
-					if(currentJob.isDefined) {
-						val job = currentJob.get
+					if(lastJob.isDefined) {
+						val job = lastJob.get
 
 						self ! Nonce(job.work, nonce, job.extranonce2)
 					}
@@ -266,9 +333,10 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		stratumSubscribe(stratumRef)
 
 	}
+
 }
 
-class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
+class GridSeedFTDIMiner(val deviceId: Usb.DeviceId, val config: Config,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
 	import FTDI._
 	import GridSeed._
@@ -307,16 +375,14 @@ class GridSeedFTDIMiner(val deviceId: Usb.DeviceId,
 
 }
 
-class GridSeedSGSMiner(val deviceId: Usb.DeviceId,
+class GridSeedSGSMiner(val deviceId: Usb.DeviceId, val config: Config,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef]) extends GridSeedMiner {
-	import FTDI._
 	import GridSeed._
-	import Constants._
 
 	def identity: USBIdentity = GSD
 	def hashType = ScalaMiner.Scrypt
-	def readDelay = 20.millis
-	def readSize = 0x2000 // ?
+	def readDelay = 2.millis
+	def readSize = 12//0x2000//12 // ?
 
 	override def isFTDI = false
 
@@ -402,8 +468,10 @@ case object GridSeed extends USBDeviceDriver {
 
 	def hashType: ScalaMiner.HashType = ScalaMiner.Scrypt
 
-	val gsTimeout = 100.millis
-	val btcNonceReadTimeout = 11152.millis
+	override def submitsAtDifficulty = true
+
+	val gsTimeout = 2.minutes
+	val btcNonceReadTimeout = 11.152.seconds
 	val scryptNonceReadTimeout = btcNonceReadTimeout * 3
 
 	case object GSD extends USBIdentity {
@@ -415,6 +483,9 @@ case object GridSeed extends USBDeviceDriver {
 		def config = 1
 		def timeout = gsTimeout
 
+		override def irpDelay = GSConstants.COMMAND_DELAY
+		//override def irpTimeout = 3.seconds
+
 		def isMultiCoin = true
 
 		val interfaces = Set(Usb.Interface(1, Set(
@@ -423,9 +494,9 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 3, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[GridSeedSGSMiner], device, workRefs)
+			Props(classOf[GridSeedSGSMiner], device, config, workRefs)
 	}
 
 	case object GSD1 extends USBIdentity {
@@ -443,7 +514,7 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 1, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props = ???
 	}
 
@@ -462,9 +533,9 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(512, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
-			Props(classOf[GridSeedFTDIMiner], device, workRefs)
+			Props(classOf[GridSeedFTDIMiner], device, config, workRefs)
 	}
 
 	case object GSD3 extends USBIdentity {
@@ -482,18 +553,19 @@ case object GridSeed extends USBDeviceDriver {
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		def usbDeviceActorProps(device: Usb.DeviceId,
+		def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			??? //Props(classOf[GSD3Device], device)
 	}
 
-	val identities: Set[USBIdentity] = Set(GSD, GSD2) //Set(GSD, GSD1, GSD2, GSD3)
+	val identities: Set[USBIdentity] = Set(GSD)//, GSD2) //Set(GSD, GSD1, GSD2, GSD3)
 
 	lazy val Constants = GSConstants
 }
 
 object GSConstants {
 	val rrId = "RR".hashCode()
+	val rwId = "RW".hashCode()
 
 	val MINER_THREADS = 1
 	val LATENCY = 4.toShort
@@ -504,13 +576,12 @@ object GSConstants {
 	val DEFAULT_USEFIFO = 0
 	val DEFAULT_BTCORE = 16
 
-	val COMMAND_DELAY = 20
+	val COMMAND_DELAY = 20.millis
 	val READ_SIZE = 12
 	val MCU_QUEUE_LEN = 0
 	val SOFT_QUEUE_LEN = (MCU_QUEUE_LEN + 2)
 	val READBUF_SIZE = 8192
 	val HASH_SPEED = 0.0851128926.millis
-	// in ms
 	val F_IN = 25 // input frequency
 
 	val PROXY_PORT = 3350
@@ -525,33 +596,48 @@ object GSConstants {
 
 	val detectBytes = "55aac000909090900000000001000000".fromHex
 	val detectRespBytes = "55aac00090909090".fromHex
-	//val chipResetBytes = "55AAC000808080800000000001000000".fromHex
+	
+	val resetChips = "55AAC000808080800000000001000000".fromHex //cgminer
+	//val resetChips = "55aac000e0e0e0e00000000001000000".fromHex //from GC3355_USB_Protocol_V1.1_EN.pdf
 
-	//from GC3355_USB_Protocol_V1.1_EN.pdf
-	val chipResetBytes = "55aac000e0e0e0e00000000001000000".fromHex
+	//used just for dualminer? sha chip gating
+	val disableSha2ForChip = for(i <- 0 until DEFAULT_CHIPS)
+	yield "55AAEF0200000000".fromHex.updated(3, (2 + i).toByte).toHex
 
+	val enableSHA2 = "55aaef3020000000"
+	val enableScrypt = "55aa1f2814000000" //not sure where this came from...
+	val enableGCP = "55aa1f2817000000"
+	def disableSHA2 = disableSha2ForChip(0) //chip 1
+	val scryptReset = "55AA1F2816000000"
+	//def enableScrypt = scryptReset
+
+	//all multi chip, sets 5 chips
 	val commonInitBytes = Seq(
-		"55aac000101010100000000001000000", //reset
+		"55aac000101010100000000001000000", //reset   maybe need this?
 		"55aac000c0c0c0c00500000001000000", //5chip
-		"55aac000b0b0b0b000c2010001000000" //115200bps baud
+		//"55aac000b0b0b0b000c2010001000000", //115200bps baud   do we need this? what is this?
+		disableSHA2 + "00000000000000000000000000000000", //power down btc units
+		enableSHA2
 	).map(_.fromHex)
 
 	val singleInitBytes = commonInitBytes ++ Seq(
-		//"55AAEF3020000000", // ?
-		//"55aac000808080800000000001000000", // ??
-		"55aaef020000000000000000000000000000000000000000", //power down btc units
-		"55aaef3020000000", //not sure what these last 3 things do
-		"55aa1f2814000000",
-		"55aa1f2817000000"
+		//enableSHA2, //enable SHA-2, but needed for scrypt?
+		enableScrypt, // Enable Scrypt
+		enableGCP  //enable GCP
+		//"0000000000000000" //seeing this in debug for cgminer... not sure why
 	).map(_.fromHex)
-	val singleResetBytes = Seq("55AA1F2816000000",
-		"55AA1F2817000000").map(_.fromHex)
 
-	val dualInitBytes = commonInitBytes ++ Seq("55AA1F2814000000",
-		"55AA1F2817000000").map(_.fromHex)
-	val dualResetBytes = Seq("55AA1F2814000000",
-		"55AA1F2817000000").map(_.fromHex)
+	//called before jobstart for gridseed and dualminer in dual
+	val scryptResetBytes = Seq(scryptReset,
+		enableGCP).map(_.fromHex)
 
+	//used by init for gridseed, or init for dual mode dualminer
+	/*val dualInitBytes = commonInitBytes ++ Seq(enableScrypt,
+		enableGCP).map(_.fromHex)*/
+	def dualInitBytes = singleInitBytes
+	val dualResetBytes = dualInitBytes
+
+	//TODO: look into gc3355_config_cpm for full freq function
 	val freqNumbers = Seq(
 		700,  706,  713,  719,  725,  731,  738,  744,
 		750,  756,  763,  769,  775,  781,  788,  794,
@@ -565,12 +651,33 @@ object GSConstants {
 
 	lazy val frequencyCommands = (freqNumbers zip binFrequency).toMap
 
-	def getFreqFor(freq: Int) = {
+	def getFreqCommandTable(freq: Int) = {
 		val closest = freqNumbers.map(x =>
 			x -> math.abs(x - freq)).sortBy(_._2).head._1
 
-		closest
+		(frequencyCommands(closest), closest)
 	}
+
+	def getFreqCommandCalc(freq: Int, pll_f0: Int = 0, pll_r: Int = 0, pll_od: Int = 0) = {
+		val pll_f = if(pll_r == 0 && pll_f0 == 0 && pll_od == 0) {
+			// Support frequency increments of 25.
+			val x = freq / F_IN - 1
+			math.max(0, math.min(127, x))
+		} else 0
+
+		val f_ref = F_IN / (pll_r + 1)
+		val f_vco = f_ref * (pll_f + 1)
+		val f_out = f_vco / (1 << pll_od)
+		val pll_bs = if(f_out >= 500) 1 else 0
+		val cfg_pm = 1
+		val pll_clk_gate = 1
+		val cmd = (cfg_pm << 0) | (pll_clk_gate << 2) | (pll_r << 16) |
+				(pll_f << 21) | (pll_od << 28) | (pll_bs << 31)
+
+		("55aaef00".fromHex ++ intToBytes(cmd).reverse, f_out)
+	}
+
+	def getFreqCommand = getFreqCommandCalc(_: Int, 0, 0, 0)
 
 	val binFrequency = Seq(
 		"55aaef0005006083",

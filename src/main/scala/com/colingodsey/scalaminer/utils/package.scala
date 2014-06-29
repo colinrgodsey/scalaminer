@@ -33,9 +33,9 @@ package object utils {
 		//val bs = BigInt(x).toByteArray
 		//Seq.fill[Byte](4 - bs.length)(0) ++ bs
 
-		Vector(((x >> 24) & 0xFF).toByte,
-			((x >> 16) & 0xFF).toByte,
-			((x >> 8 ) & 0xFF).toByte,
+		Vector(((x >>> 24) & 0xFF).toByte,
+			((x >>> 16) & 0xFF).toByte,
+			((x >>> 8 ) & 0xFF).toByte,
 			((x      ) & 0xFF).toByte)
 	}
 
@@ -48,7 +48,7 @@ package object utils {
 	//TODO: replace with Cord from MediaMath when OSd
 	/** Wrapper class to enable serialization of all seqs */
 	@SerialVersionUID(150000343434000010L)
-	final class SerializableByteSeq private (seq0: Seq[Byte]) extends Serializable {
+	final class SerializableByteSeq private (seq0: Seq[Byte]) extends Serializable with Equals {
 		private def this() {
 			this(Nil)
 		}
@@ -68,6 +68,20 @@ package object utils {
 			stream.writeInt(seq.length)
 			seq.foreach(b => stream.writeByte(b))
 		}
+
+		def canEqual(that: Any) = that match {
+			case _: SerializableByteSeq => true
+			case _: Seq[_] => true
+			case _ => false
+		}
+
+		override def equals(that: Any) = that match {
+			case x: SerializableByteSeq => x.seq == seq
+			case x: Seq[_] => seq == x
+			case _ => false
+		}
+
+		override def toString = seq.toString
 	}
 
 	object SerializableByteSeq {
@@ -108,7 +122,7 @@ package object utils {
 
 		while(itr.hasNext) {
 			val byte = itr.next
-			val n1 = (byte >> 4) & 0xF
+			val n1 = (byte >>> 4) & 0xF
 			val n2 = byte & 0xF
 
 			builder += hexDigits(n1)

@@ -57,12 +57,14 @@ for dual mode! Just configure both a scrypt and sha256 stratum, set the switch o
 and plug it in. Dual mode is detected per-device by only the switch, enabling you to run some
 devices in dual and some in single, all from the same process.
 * [GridSeed](http://gridseed.com/) 5-Chip 320kH/s ASIC GC3355 - Currently only
-LTC mode implemented (still trying to find non-conflicting specs).
+LTC mode implemented (still trying to find non-conflicting specs). Supports finer
+incremental frequencies.
 * [Butterfly Labs](http://www.butterflylabs.com/) BitForce SC - Single device
 only (no XLINK support). Has been tested with the 7.18 GH/s upgrade Jalapeno, should work
 with regular Jalapeno devices and the Little Singles.
 * [Bitmain](https://bitmaintech.com/) AntMiner U1/U2
 * ASICMiner Block Erupter USB
+* [BitFury](http://www.bitfury.org/) RED/BLUE Fury, NanoFury
 
 **Hardware requests**
 
@@ -92,8 +94,9 @@ the default config in reference.conf (override using application.conf in the bas
 of the provided ones doesn't work for you.
 * Configuration is done using Typesafe Config. Refer to the
 [*reference.conf*](https://github.com/colinrgodsey/scalaminer/blob/master/src/main/resources/reference.conf)
-file for config fields/structure. Place your overrides in *application.conf* in the base
+file for config fields/structure. Place your overrides in *scalaminer.conf* in the base
 directory. Make sure to configure your pools, or it uses the default (as seen in *reference.conf*)!
+See *scalaminer.conf.example* for a basic config.
 * More info coming soon....
 
 **Known Issues**

@@ -111,7 +111,7 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 			}
 
 			if(!expired.isEmpty) {
-				log.warning(expired.size + " jobs timed out")
+				log.info(expired.size + " jobs timed out")
 				merkleJobMap --= expired.keySet
 				self ! MinerMetrics.MetricValue(MinerMetrics.WorkTimeout, expired.size)
 			}

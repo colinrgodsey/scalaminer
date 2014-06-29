@@ -21,17 +21,9 @@ import akka.io.{ IO, Tcp }
 import java.net.{InetAddress, InetSocketAddress}
 import akka.util.{Timeout, ByteString}
 import DefaultJsonProtocol._
-import spray.routing.{RequestContext, StandardRoute, HttpService}
-import spray.http.{HttpHeaders, HttpRequest}
-import spray.httpx.marshalling.ToResponseMarshallable
-import javax.xml.bind.DatatypeConverter
 import com.colingodsey.scalaminer.hashing.Hashing
-import Hashing._
-import com.colingodsey.scalaminer.network.Stratum.MiningJob
-import scala.concurrent._
 import com.colingodsey.scalaminer.{ScalaMiner, Work}
 import com.colingodsey.scalaminer.utils._
-import akka.io.Tcp.ConnectionClosed
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
 
 object Stratum {
@@ -39,7 +31,7 @@ object Stratum {
 
 	case class Subscribe(ref: ActorRef) extends Command
 	case class UnSubscribe(ref: ActorRef) extends Command
-	case class SubmitStratumJob(params: Seq[JsValue]) extends Command
+	case class SubmitStratumJob(params: Seq[JsValue], job: MiningJob) extends Command
 	case class Difficulty(diff: Int) extends Command
 	case class StratumError(eid: Int, msg: String) extends Command
 	case object WorkAccepted extends Command
@@ -52,12 +44,13 @@ object Stratum {
 		def runningFor = ((System.currentTimeMillis / 1000) - started).seconds
 	}
 
-	case class StratumConnection(host: String, port: Int,
-			user: String, pass: String)
+	case class Connection(host: String, port: Int,
+			user: String, pass: String, weight: Double = 1, priority: Int = 0)
 
 	case class MiningJob(hashType: ScalaMiner.HashType, id: String, prevHashStr: String,
 			coinbase1Str: String, coinbase2Str: String, merkleBranchStrs: Seq[String],
 			versionStr: String, nBitsStr: String, nTimeStr: String, cleanJobs: Boolean,
+			connection: Connection,
 			received: Long = System.currentTimeMillis / 1000) {
 		val time = BigInt("00" + nTimeStr, 16).toLong
 		val dTime = time - received.toInt
@@ -73,7 +66,7 @@ object Stratum {
 	case class ExtraNonce(hashType: ScalaMiner.HashType, extranonce1: Seq[Byte], extranonce2Size: Int)
 
 	object StratumProtocol extends ModifiedJsonProtocol {
-		implicit val _a1 = jsonFormat4(StratumConnection)
+		implicit val _a1 = jsonFormat6(Connection)
 	}
 
 	case class JSONResponse(json: JsObject) {
@@ -81,7 +74,7 @@ object Stratum {
 	}
 }
 
-class StratumActor(conn: Stratum.StratumConnection,
+class StratumActor(conn: Stratum.Connection,
 			hashType: ScalaMiner.HashType)
 		extends Actor with ActorLogging with Stash {
 	import Stratum._
@@ -144,10 +137,10 @@ class StratumActor(conn: Stratum.StratumConnection,
 		case Tcp.CommandFailed(cmd) =>
 			sys.error("TCP command failed " + cmd)
 		case x: Tcp.ConnectionClosed =>
-			//TODO: on stratum restart, suscribers arent carried over
-			log.warning("Connection closed! " + x)
-			context unwatch connectionActor
-			connect()
+			//just close, let pool restart
+			sys.error(s"$conn closed with $x!")
+			//context unwatch connectionActor
+			//connect()
 		case Tcp.Received(data) =>
 			val str = new String(data.toArray, "UTF8")
 
@@ -195,7 +188,7 @@ class StratumActor(conn: Stratum.StratumConnection,
 
 	def waitingConnect: Receive = dataReceive orElse {
 		case _: Tcp.Connected =>
-			log.info("Connected!")
+			log.info(conn + " connected!")
 
 			connectionActor = sender
 			connectionActor ! Tcp.Register(self)
@@ -209,7 +202,7 @@ class StratumActor(conn: Stratum.StratumConnection,
 	}
 
 	def receiveResponses: Receive = {
-		case x @ JSONResponse(js) if x.isBroadcast =>
+		case x@JSONResponse(js) if x.isBroadcast =>
 			lastRecv = Deadline.now
 
 			js.fields("method").convertTo[String] match {
@@ -225,7 +218,7 @@ class StratumActor(conn: Stratum.StratumConnection,
 						vals(2).convertTo[String], vals(3).convertTo[String],
 						vals(4).convertTo[Seq[String]], vals(5).convertTo[String],
 						vals(6).convertTo[String], vals(7).convertTo[String],
-						vals(8).convertTo[Boolean])
+						vals(8).convertTo[Boolean], conn)
 
 					lastJob = Some(job)
 
@@ -245,12 +238,14 @@ class StratumActor(conn: Stratum.StratumConnection,
 			/*if(js.fields.get("error") != Some(JsNull))
 				log.warning("Js error! " + js.fields("error"))*/
 
-			require(responseMap.get(id).isDefined, "No response callback for resp " + id)
+			if(!responseMap.get(id).isDefined) {
+				log.warning("No response callback for resp " + id)
+			} else {
+				responseMap(id)(js)
+				responseMap -= id
+			}
 
-			responseMap(id)(js)
-			responseMap -= id
-
-		case SubmitStratumJob(params0) =>
+		case SubmitStratumJob(params0, job) =>
 			val params = conn.user.toJson +: params0
 			val respondTo = sender
 

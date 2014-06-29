@@ -7,7 +7,7 @@ import AssemblyKeys._
 
 object ProjectBuild extends Build {
 	val Organization = "com.colingodsey"
-	val Version = "0.2"
+	val Version = "0.4"
 	val ScalaVersion = "2.10.4"
 
 	object Dependencies {
@@ -66,6 +66,7 @@ object ProjectBuild extends Build {
 	val jvmOpts = """ -XX:ParallelGCThreads=1
     -Xms20m -Xmx256m -XX:MaxPermSize=128m
     -XX:+UseParallelGC -Xminf=10 -Xmaxf=15
+-Dusb4java.libext.strangeos=test
     -XX:+AggressiveOpts -server
     -XX:ReservedCodeCacheSize=64m -XX:+UseFastAccessorMethods
     -XX:+BackgroundCompilation -XX:+UseCodeCacheFlushing

@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * io.Usb
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -126,18 +126,20 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 			"Unable to read device descriptor", result)
 
 		DeviceId(LibUsb.getBusNumber(device), LibUsb.getDeviceAddress(device),
-			LibUsb.getPortNumber(device), descToDesc(descriptor))
+			LibUsb.getPortNumber(device), descToDesc(descriptor), self)
 	}
 
 	def receive = {
-		case Subscribe =>
+		case Subscribe if !subscribers(sender) =>
 			subscribers += sender
 			context watch sender
 
 			for(d <- deviceSet) sender ! DeviceConnected(d)
-		case UnSubscribe =>
+		case UnSubscribe if subscribers(sender) =>
 			subscribers -= sender
 			context unwatch sender
+		case Subscribe =>
+		case UnSubscribe =>
 		case Connect(deviceId) => deviceActors get deviceId match {
 			case Some(ref) => sender ! Connected(deviceId, Some(ref))
 			case None =>
@@ -159,7 +161,7 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 						if(r != LibUsb.SUCCESS) {
 							log.error(new LibUsbException("Unable to open handle", r),
 								"Failed to open device handle")
-							Connected(deviceId, None)
+							sender ! Connected(deviceId, None)
 						} else {
 							val ref = context.actorOf(Props(classOf[UsbDevice],
 								handle, deviceId), name = deviceId.idKey)
@@ -227,8 +229,6 @@ class UsbHost(usb: UsbExt) extends Actor with ActorLogging {
 			} ref ! DeviceDisconnected(device)
 
 			LibUsb.freeDeviceList(list, true)
-
-
 	}
 
 	override def preStart() {

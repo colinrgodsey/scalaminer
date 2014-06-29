@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -21,7 +21,7 @@ import akka.pattern._
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.{MinerIdentity, ScalaMiner, MinerDriver}
 import com.colingodsey.scalaminer.metrics.MinerMetrics
-import com.typesafe.config.Config
+import com.typesafe.config.{ConfigFactory, Config}
 import com.colingodsey.io.usb.Usb
 import akka.util.Timeout
 import akka.io.IO
@@ -38,6 +38,8 @@ trait USBDeviceDriver extends MinerDriver {
 	def identities: Set[USBIdentity]
 
 	def hashType: ScalaMiner.HashType
+
+	def name = toString.toLowerCase()
 }
 
 //should be a case object
@@ -47,15 +49,21 @@ trait USBIdentity extends MinerIdentity {
 	def idProduct: Short
 	def iManufacturer: String
 	def iProduct: String
-	//def config = 1,
+	def config: Int
 	def timeout: FiniteDuration
 
-	def latency: FiniteDuration = 32.millis
+	def irpTimeout = timeout
+	//delay in irp queue
+	def irpDelay = 2.millis
+	//def latency: FiniteDuration = 32.millis
 	def name: String = toString
 
 	def interfaces: Set[Usb.Interface]
 
-	def usbDeviceActorProps(device: Usb.DeviceId,
+	//TODO: implement tryAfter logic! super useful for AMU/ANU for example
+	def tryAfter: Set[USBIdentity] = Set()
+
+	def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 			workRefs: Map[ScalaMiner.HashType, ActorRef]): Props
 
 	/*def matches(device: UsbDevice) = {
@@ -77,7 +85,7 @@ object UsbDeviceManager {
 	case class AddDriver(driver: USBDeviceDriver) extends Command
 	case class AddStratumRef(typ: ScalaMiner.HashType, stratumRef: ActorRef) extends Command
 
-	case class FailedIdentify(ref: ActorRef, identity: USBIdentity) extends Command
+	case class FailedIdentify(deviceId: Usb.DeviceId, identity: USBIdentity) extends Command
 
 	case object IdentityReset extends Command
 
@@ -96,18 +104,23 @@ class UsbDeviceManager(config: Config)
 	implicit def system = context.system
 	private implicit def ec = context.system.dispatcher
 
+	def removeDelay = 1.2.seconds
+
 	lazy val libUsbHost: ActorRef = IO(Usb)
 
 	var usbDrivers: Set[USBDeviceDriver] = Set.empty
 	var workerMap: Map[Usb.DeviceId, ActorRef] = Map.empty
 	var stratumEndpoints: Map[ScalaMiner.HashType, ActorRef] = Map.empty
 	var failedIdentityMap: Map[Usb.DeviceId, Set[USBIdentity]] = Map.empty
+	var lastSuccessfulIdentity: Map[Usb.DeviceId, USBIdentity] = Map.empty
 	var metricsSubs = Set[ActorRef]()
 	var devices = Set.empty[Usb.DeviceId]
 	var pollQueued = false
 
 	val identityResetTimer = context.system.scheduler.schedule(
 		1.minute, config getDur "identity-reset-time", self, IdentityReset)
+
+	def revWorkerMap = workerMap.map(_.swap)
 
 	case class CreateDeviceIdentity(id: Usb.DeviceId, identity: USBIdentity)
 	case object PollDevices
@@ -123,10 +136,24 @@ class UsbDeviceManager(config: Config)
 		self ! PollDevices
 	}
 
+	def optConfigOrBlank(key: String) =
+		if(config.hasPath(key)) config.getConfig(key)
+		else ConfigFactory.empty
+
+	def nameFor(id: Usb.DeviceId, identity: USBIdentity) =
+		identity.name + "-" + id.portId
+
+	def configFor(name: String, identity: USBIdentity) =
+		optConfigOrBlank(name) withFallback
+				optConfigOrBlank(identity.name.toLowerCase) withFallback
+				optConfigOrBlank(identity.drv.name.toLowerCase) withFallback
+				optConfigOrBlank("device")
+
 	def receive = {
 		case Start =>
 			context watch libUsbHost
 			libUsbHost ! Usb.Subscribe
+			log.info("Subscribing to host " + libUsbHost)
 		case MinerMetrics.Subscribe =>
 			metricsSubs += sender
 			workerMap.foreach(_._2.tell(MinerMetrics.Subscribe, sender))
@@ -137,19 +164,21 @@ class UsbDeviceManager(config: Config)
 		case Terminated(ref) if metricsSubs(ref) =>
 			metricsSubs -= ref
 		case IdentityReset =>
+			log.info("Resetting identities")
 			failedIdentityMap = Map.empty
 			self ! PollDevices
 		case AddStratumRef(t, ref) => stratumEndpoints += t -> ref
 		case AddDriver(drv) => usbDrivers += drv
-		case FailedIdentify(ref, identity) =>
-			workerMap.filter(_._2 == ref).map(_._1).headOption.foreach { dev =>
-				val s = failedIdentityMap.getOrElse(dev, Set.empty)
-				failedIdentityMap += dev -> (s + identity)
-			}
+		case FailedIdentify(id, identity) =>
+			log.info(s"$id failed identity $identity")
 
-			self ! PollDevices
+			val s = failedIdentityMap.getOrElse(id, Set.empty)
+			failedIdentityMap += id -> (s + identity)
+			lastSuccessfulIdentity -= id
+
+			maybePoll()
 		case Terminated(x) =>
-			context.system.scheduler.scheduleOnce(500.millis, self, RemoveRef(x))
+			context.system.scheduler.scheduleOnce(removeDelay, self, RemoveRef(x))
 		case RemoveRef(x) =>
 			val filtered = workerMap.filter(_._2 == x).keySet
 
@@ -157,11 +186,13 @@ class UsbDeviceManager(config: Config)
 
 			log.warning(s"$x died! Removing ${filtered.size} devices.")
 
-			self ! PollDevices
+			maybePoll()
 		//got an identity and a device ref
 		case CreateDeviceIdentity(id, identity) if !workerMap.contains(id) =>
-			val props = identity.usbDeviceActorProps(id, stratumEndpoints)
-			val name = identity.name + "." + id.portId
+			val name = nameFor(id, identity)
+			val devConfig = configFor(name, identity)
+
+			val props = identity.usbDeviceActorProps(id, devConfig, stratumEndpoints)
 			val ref = context.actorOf(props, name = name)
 
 			log.info(s"Starting $ref for dev $id")
@@ -171,32 +202,43 @@ class UsbDeviceManager(config: Config)
 			metricsSubs.foreach(ref.tell(MinerMetrics.Subscribe, _))
 
 			workerMap += id -> ref
+
+			//add here, will be removed if fails ident
+			lastSuccessfulIdentity += id -> identity
 		case Usb.DeviceConnected(id) =>
 			devices += id
 
 			log.debug("Device connected " + id)
 
-			self ! PollDevices
+			maybePoll()
 		case Usb.DeviceDisconnected(id) =>
-			devices -= id
-
 			log.debug("Device disconnected " + id)
 
 			workerMap.get(id) foreach context.stop
+
+			workerMap -= id
+			devices -= id
+			lastSuccessfulIdentity -= id
+			failedIdentityMap -= id
 		case PollDevices =>
 			pollQueued = false
 
-			val matches = for {
-				id <- devices
+			val matchesSeq = for {
+				id <- devices.toSeq
 				if !id.desc.isHub
 				failedSet = failedIdentityMap.getOrElse(id, Set.empty)
 				if !workerMap.contains(id)
 				driver <- usbDrivers
-				identity <- driver.identities
+				lastGood = lastSuccessfulIdentity get id
+				//turn into a seq and put the possible good one first
+				identity <- lastGood.toSeq ++ (driver.identities -- lastGood.toSet).toSeq
 				if !failedSet(identity)
 				if identity matches id
+				_ = log.info(s"maybe $identity for $id")
 				if stratumEndpoints contains driver.hashType
 			} yield id -> identity
+
+			val matches = matchesSeq.groupBy(_._1).map(_._2.head).toMap
 
 			matches foreach { case (id, identity) =>
 				self ! CreateDeviceIdentity(id, identity)

@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -21,12 +21,23 @@ case class Sample(value: Counter.MetricValue, time: Long = curTime)
 
 object Counter {
 	type MetricValue = Float
+
+	case class Snapshot(started: Long,
+			maxTimeFrame: FiniteDuration,
+			sum: Double,
+			totalSum: Double,
+			rate: Double) {
+		def +(other: Snapshot) =
+			copy(sum = sum + other.sum, rate = rate + other.rate,
+				totalSum = totalSum + other.totalSum)
+	}
 }
 
 trait Counter {
 	def started: Long
 	def maxTimeFrame: FiniteDuration
 	def sum: Double
+	def totalSum: Double
 
 	def purged: Counter
 	def forTimeFrame(timeFrame: FiniteDuration): Counter
@@ -40,12 +51,16 @@ trait Counter {
 
 	//in seconds
 	def rate = sum / curTimeFrame.toSeconds
+
+	def snapshot = Counter.Snapshot(
+		started, maxTimeFrame, sum, totalSum, rate
+	)
 }
 
 case class ImmutableCounter(maxTimeFrame: FiniteDuration,
 		samples: Queue[Sample] = Queue.empty,
 		started: Long = curTime,
-		total: Double = 0, sum: Double = 0) extends Counter {
+		total: Double = 0, sum: Double = 0, totalSum: Double = 0) extends Counter {
 	//require(maxTimeFrame > 0.seconds)
 
 	def purged = {
@@ -53,6 +68,7 @@ case class ImmutableCounter(maxTimeFrame: FiniteDuration,
 		val after = samples.dropWhile(_.time < minTime)
 		val removed = samples.take(samples.length - after.length)
 		val removedSum = removed.foldLeft(0.0)(_ + _.value)
+		//TODO: change sum?
 		copy(samples = after, sum = sum - removedSum)
 	}
 
@@ -65,7 +81,8 @@ case class ImmutableCounter(maxTimeFrame: FiniteDuration,
 
 	def add(value: Counter.MetricValue) =
 		copy(samples = samples :+ Sample(value),
-			total = total + value, sum = sum + value)
+			total = total + value, sum = sum + value,
+			totalSum = totalSum + value)
 
 	override def toString = s"Counter(frame = ${maxTimeFrame.toMinutes}m, " +
 			s"sum = $sum, rate = $rate)"
@@ -77,12 +94,14 @@ class MutableCounter(var maxTimeFrame: FiniteDuration) extends Counter {
 
 	var total = 0.0
 	var sum = 0.0
+	var totalSum = 0.0
 	val samples = scala.collection.mutable.Queue.empty[Sample]
 
 	def add(value: Counter.MetricValue) = {
 		samples enqueue Sample(value)
 		total += value
 		sum += value
+		totalSum += value
 		this
 	}
 

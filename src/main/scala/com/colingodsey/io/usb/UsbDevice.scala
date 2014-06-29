@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * io.Usb
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -28,8 +28,9 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 	def maxUsbQueueSize = 500
 	//TODO: this needs to be configurable, dynamic or otherwise
-	val irpTimeout = 2.minutes//100.millis
-	val irpDelay = 2.millis
+	var irpTimeout = 100.millis
+	//TODO: this probably should never be here... or be configurable
+	var irpDelay = 2.millis
 
 	var claimedInterfaces = Set.empty[Int]
 	var endpointQueues = Map.empty[Endpoint, mutable.Queue[(IrpRequest, ActorRef)]]
@@ -106,13 +107,22 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 
 		//log.info("Starting bulk transfer " + irpReq)
 
+		//if(!irpReq.isRead) log.info("sending " + dat.toHex)
+
 		if(!claimedInterfaces(inf)) {
 			log.debug("Claiming interface " + inf)
+
+			log.debug("SUPPORTS DETACH " + LibUsb.hasCapability(LibUsb.CAP_SUPPORTS_DETACH_KERNEL_DRIVER))
+			log.debug("DRIVER ACTIVE " + LibUsb.kernelDriverActive(handle, inf))
 
 			val detach = LibUsb.hasCapability(LibUsb.CAP_SUPPORTS_DETACH_KERNEL_DRIVER) &&
 					LibUsb.kernelDriverActive(handle, inf) == 1
 
+			if(!detach && LibUsb.kernelDriverActive(handle, inf) == 1)
+				log.warning("Cannot detach active kernel driver. Missing libusb capability.")
+
 			if(detach) {
+				log.info("Detaching kernel driver")
 				val result = LibUsb.detachKernelDriver(handle, inf)
 				if(result != LibUsb.SUCCESS) throw new LibUsbException(
 					"Unable to detach kernel driver", result)
@@ -155,10 +165,17 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 		case x: BulkIrpRequest => // if !queueFor(x.endpoint).isEmpty =>
 			queueFor(x.endpoint) enqueue (x -> sender)
 			checkEndpointQueue(x.endpoint)
+
+		case SetConfiguration(config) =>
+			LibUsb.setConfiguration(handle, config)
+		case SetIrpTimeout(dur) => irpTimeout = dur
+		case SetIrpDelay(delay) => irpDelay = delay
 	}
 
 	override def preStart() {
 		super.preStart()
+
+		LibUsb.setAutoDetachKernelDriver(handle, true)
 	}
 
 	override def postStop() {
@@ -171,6 +188,7 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 			LibUsb.releaseInterface(handle, x)
 
 			if(detach) {
+				log.info("Attaching kernel driver")
 				val result = LibUsb.attachKernelDriver(handle, x)
 				if(result != LibUsb.SUCCESS) throw new LibUsbException(
 					"Unable to re-attach kernel driver", result)
@@ -225,8 +243,9 @@ class UsbDevice(handle: DeviceHandle, deviceId: Usb.DeviceId)
 					LibUsb freeTransfer transfer
 
 					respondTo ! r
-					context.system.scheduler.scheduleOnce(
+					if(irpDelay > 0.nanos) context.system.scheduler.scheduleOnce(
 						irpDelay, self, UnbusyEndpoint(irp.endpoint))
+					else self ! UnbusyEndpoint(irp.endpoint)
 				case LibUsb.TRANSFER_TIMED_OUT =>
 					bail(IrpTimeout(irp))
 				case LibUsb.TRANSFER_CANCELLED =>

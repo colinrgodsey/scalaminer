@@ -20,7 +20,6 @@ import akka.pattern._
 import spray.json._
 import scala.concurrent.Await
 import com.colingodsey.scalaminer.metrics.{MinerMetrics, AbstractMetricsActor}
-import com.colingodsey.scalaminer.drivers.MetricsMiner
 import spray.routing.{RequestContext, StandardRoute, HttpService}
 import spray.httpx.unmarshalling._
 import spray.httpx.marshalling._
@@ -83,7 +82,7 @@ class MetricsUI extends AbstractMetricsActor with HttpService {
 
 				val extras = identities.get(ref) match {
 					case Some(MinerMetrics.Identity(typ, id, hash)) => Map(
-						"type" -> typ.toJson,
+						"type" -> typ.toString.toJson,
 						"id" -> id.toJson,
 						"hash" -> hash.toString.toJson
 					)

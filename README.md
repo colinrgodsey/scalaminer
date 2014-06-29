@@ -92,7 +92,7 @@ the default config in reference.conf (override using application.conf in the bas
 of the provided ones doesn't work for you.
 * Configuration is done using Typesafe Config. Refer to the
 [*reference.conf*](https://github.com/colinrgodsey/scalaminer/blob/master/src/main/resources/reference.conf)
-file for config fields/structure. Place your overrides in *application.conf* in the base
+file for config fields/structure. Place your overrides in *scalaminer.conf* in the base
 directory. Make sure to configure your pools, or it uses the default (as seen in *reference.conf*)!
 * More info coming soon....
 
@@ -104,6 +104,13 @@ out the fine folks at libusb and/or usb4java diagnose the issue.
 * No rules file for Debian/Ubuntu. Should be able to use the same one from
 [cgminer](https://github.com/ckolivas/cgminer/blob/master/01-cgminer.rules) and add your
 devices. Or just run the thing as root.
+
+**Credits**
+
+Based on code from:
+
+* cgminer by Con Kolivas: https://github.com/ckolivas/cgminer
+* stratum mining proxy by Marek Palatinus: https://github.com/slush0/stratum-mining-proxy
 
 **[License](https://raw.githubusercontent.com/colinrgodsey/scalaminer/master/LICENSE)**
 ==========

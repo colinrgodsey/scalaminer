@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -34,7 +34,7 @@ import scala.concurrent._
 import com.colingodsey.scalaminer._
 import scala.collection.JavaConversions._
 import spray.can.Http
-import com.colingodsey.scalaminer.drivers.{MetricsMiner, AbstractMiner}
+import com.colingodsey.scalaminer.drivers.{AbstractMiner}
 import com.colingodsey.scalaminer.utils._
 import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._
@@ -111,7 +111,7 @@ class StratumProxy(override val stratumRef: ActorRef, config: Config)
 			}
 
 			if(!expired.isEmpty) {
-				log.warning(expired.size + " jobs timed out")
+				log.info(expired.size + " jobs timed out")
 				merkleJobMap --= expired.keySet
 				self ! MinerMetrics.MetricValue(MinerMetrics.WorkTimeout, expired.size)
 			}

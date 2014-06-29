@@ -1,19 +1,12 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 3 of the License, or (at your option)
- * any later version.  See COPYING for more details.
- */
-
-/*
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  * Copyright 2012-2013 Lingchao Xu <lingchao.xu@bitmaintech.com>
  * Copyright 2014 Andrew Smith
+ * Copyright 2011-2014 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free

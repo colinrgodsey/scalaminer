@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * io.Usb
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -15,33 +15,57 @@ package com.colingodsey.io.usb
 
 import akka.actor._
 import com.colingodsey.scalaminer.utils._
+import scala.collection.JavaConversions._
 import org.usb4java.LibUsb
 import com.typesafe.config.Config
 import akka.io.SelectionHandlerSettings
+import scala.concurrent.duration.FiniteDuration
 
 object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	case class ControlIrp(requestType: Byte, request: Byte,
 			value: Short, index: Short) {
 		def send = SendControlIrp(this)
 	}
-	case class DeviceId(bus: Int, address: Int, port: Int, desc: DeviceDescriptor) {
+	case class DeviceId(bus: Int, address: Int, port: Int,
+			desc: DeviceDescriptor, hostRef: ActorRef) {
 		lazy val idKey = Seq(bus, address, desc.vendor.toInt,
 			desc.product.toInt).map(intToBytes(_).drop(2).toHex).mkString("-")
 
 		lazy val portId = Seq(bus, address, port).map(intToBytes(_).drop(3).toHex).mkString("-")
+		//lazy val portId = Seq(bus, port).map(intToBytes(_).drop(3).toHex).mkString("-")
 
 		override def toString = s"DeviceId($idKey)"
 	}
-	//case class Device(id: DeviceId, desc: Usb.DeviceDescriptor)
+
 	case class DeviceDescriptor(usbVer: Double, deviceClass: Byte,
 			deviceSubClass: Byte, deviceProtocol: Byte, maxPacketSize: Byte,
 			vendor: Short, product: Short, deviceVer: Double, numConfigurations: Byte) {
 		def isHub = deviceClass == LibUsb.CLASS_HUB
 	}
 
-	sealed trait Command
-	sealed trait Response
-	sealed trait IrpRequest extends Command {
+	sealed trait Message
+	sealed trait Response extends Message
+	sealed trait Request extends Message
+
+	//host commands
+	sealed trait HostRequest extends Request
+	sealed trait HostResponse extends Response
+
+	case class DeviceDisconnected(deviceId: DeviceId) extends HostResponse
+	case class DeviceConnected(deviceId: DeviceId) extends HostResponse
+
+	//TODO: add GetDevices
+	case object Subscribe extends HostRequest
+	case object UnSubscribe extends HostRequest
+
+	case object Close extends Request
+	case class Connect(deviceId: Usb.DeviceId) extends HostRequest
+	case class Connected(deviceId: Usb.DeviceId, ref: Option[ActorRef]) extends HostResponse
+
+	//device commands
+	sealed trait DeviceRequest extends Request
+	sealed trait DeviceResponse extends Response
+	sealed trait IrpRequest extends DeviceRequest {
 		def interface: Interface
 		def endpoint: Endpoint
 		def isRead: Boolean
@@ -53,10 +77,39 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 		def irp: ControlIrp
 	}
 
-	//host commands
-	sealed trait HostCommand extends Command
-	sealed trait HostResponse extends Response
+	case class SetConfiguration(config: Int) extends DeviceRequest
+	case class SetIrpTimeout(timeout: FiniteDuration) extends DeviceRequest
+	case class SetIrpDelay(timeout: FiniteDuration) extends DeviceRequest
 
+	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
+		def interface = ControlInterface
+		def endpoint = ControlEndpoint
+		def isRead = true
+	}
+	case class SendControlIrp(irp: ControlIrp, dat: SerializableByteSeq = Nil) extends ControlIrpRequest {
+		def interface = ControlInterface
+		def endpoint = ControlEndpoint
+		def isRead = false
+	}
+
+	case class ControlIrpResponse(irp: ControlIrp,
+			datOrLength: Either[Int, SerializableByteSeq]) extends DeviceResponse
+
+	case class ReceiveBulkTransfer(interface: Interface,
+			length: Int, id: Int = -1) extends BulkIrpRequest {
+		def endpoint = interface.input
+		def isRead = true
+	}
+	case class SendBulkTransfer(interface: Interface, dat: SerializableByteSeq,
+			id: Int = -1) extends BulkIrpRequest {
+		def endpoint = interface.output
+		def isRead = false
+	}
+
+	case class BulkTransferResponse(interface: Interface,
+			datOrLength: Either[Int, SerializableByteSeq], id: Int) extends DeviceResponse
+
+	//exceptions
 	sealed trait Error extends Exception {
 		override def fillInStackTrace() = this
 	}
@@ -74,42 +127,7 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 	case class IrpOverflow(irp: IrpRequest)
 			extends Exception("IRP transfer overflowed " + irp) with Error
 
-	case class DeviceDisconnected(deviceId: DeviceId) extends HostResponse
-	case class DeviceConnected(deviceId: DeviceId) extends HostResponse
-
-	//TODO: add GetDevices
-	case object Subscribe extends Command
-	case object UnSubscribe extends Command
-
-	case object Close extends Command
-	case class Connect(deviceId: Usb.DeviceId) extends HostCommand
-	case class Connected(deviceId: Usb.DeviceId, ref: Option[ActorRef]) extends HostResponse
-
-	case class ReceiveControlIrp(irp: ControlIrp, length: Int) extends ControlIrpRequest {
-		def interface = ControlInterface
-		def endpoint = ControlEndpoint
-		def isRead = true
-	}
-	case class SendControlIrp(irp: ControlIrp, dat: Seq[Byte] = Nil) extends ControlIrpRequest {
-		def interface = ControlInterface
-		def endpoint = ControlEndpoint
-		def isRead = false
-	}
-
-	case class ControlIrpResponse(irp: ControlIrp,
-			datOrLength: Either[Int, Seq[Byte]]) extends Response
-
-	case class ReceiveBulkTransfer(interface: Interface, length: Int, id: Int = -1) extends BulkIrpRequest {
-		def endpoint = interface.input
-		def isRead = true
-	}
-	case class SendBulkTransfer(interface: Interface, dat: Seq[Byte], id: Int = -1) extends BulkIrpRequest {
-		def endpoint = interface.output
-		def isRead = false
-	}
-
-	case class BulkTransferResponse(interface: Interface,
-			datOrLength: Either[Int, Seq[Byte]], id: Int) extends Response
+	//structures
 
 	object Interface {
 		def apply(interface: Short, endpoints: Set[Endpoint]): Interface =
@@ -172,15 +190,21 @@ object Usb extends ExtensionId[UsbExt] with ExtensionIdProvider {
 
 class UsbExt(system: ExtendedActorSystem) extends akka.io.IO.Extension {
 	val Settings = new Settings(system.settings.config.getConfig("com.colingodsey.usb"))
-	class Settings private[UsbExt] (_config: Config) {// extends SelectionHandlerSettings(_config) {
+	class Settings private[UsbExt] (_config: Config) {
 		//import akka.util.Helpers.ConfigOps
 		import _config._
+
+		val isVirtual = getBoolean("virtual-host")
+		val virtualHosts = getStringList("virtual-hosts").toSeq
 
 		val NrOfSelectors = 1
 
 		def MaxChannelsPerSelector: Int = 1
 	}
 
-	val manager = system.actorOf(Props(classOf[UsbHost], UsbExt.this), name = "IO-Usb")
+	val manager = if(!Settings.isVirtual)
+		system.actorOf(Props(classOf[UsbHost], UsbExt.this), name = "IO-Usb")
+	else system.actorOf(Props(classOf[VirtualUsbHost], UsbExt.this), name = "IO-Usb")
 	def getManager: ActorRef = manager
+
 }

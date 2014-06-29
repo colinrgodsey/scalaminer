@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -23,6 +23,7 @@ import com.colingodsey.scalaminer.utils.CRC16
 import akka.util.ByteString
 import com.colingodsey.scalaminer.metrics.MetricsWorker
 import com.colingodsey.scalaminer.ScalaMiner.HashType
+import com.typesafe.config.Config
 
 class BitMain(val deviceId: Usb.DeviceId,
 		val workRefs: Map[ScalaMiner.HashType, ActorRef])
@@ -63,7 +64,7 @@ class BitMain(val deviceId: Usb.DeviceId,
 	}
 }
 
-object BitMain extends USBDeviceDriver {
+case object BitMain extends USBDeviceDriver {
 	def hashType = ScalaMiner.SHA256
 
 	lazy val identities: Set[USBIdentity] = Set(ANTS1)
@@ -88,7 +89,7 @@ object BitMain extends USBDeviceDriver {
 			))
 		)
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BitMain], device, workRefs)
 	}

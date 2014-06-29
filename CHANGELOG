@@ -1,0 +1,15 @@
+* 0.2 *
+
+* Added support for 'icarus' AntMiner devices
+
+* 0.3 *
+
+* Auto kernel detach in place... working much better on some Linux devices with certain libusb builds.
+
+* 0.4 *
+
+* Stratum connection pooling with priority and weight
+* BitFury support (Nanofury and Blue/RedFury)
+* Started development on CGMiner API
+* Various stability and performance fixes
+* More accurate timeouts and identity failure

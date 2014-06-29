@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -11,9 +11,8 @@
  * any later version.  See COPYING for more details.
  */
 
-package com.colingodsey.scalaminer.drivers
+package com.colingodsey.scalaminer.drivers.gridseed
 
-import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.scalaminer.usb._
@@ -22,15 +21,17 @@ import com.colingodsey.scalaminer.network.Stratum
 import com.colingodsey.scalaminer.utils._
 import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
+import com.colingodsey.scalaminer.drivers.AbstractMiner
 
 trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
-		with MetricsWorker with BufferedReader {
+		with MetricsWorker with BufferedReader with GridSeedWork {
 	import DualMiner._
-	import FTDI._
 
 	implicit def ec = system.dispatcher
 
 	def cts: Boolean
+
+	//TODO: think this needs this val irpDelay = 2.millis
 
 	def nonceTimeout = if(isScrypt) 33.seconds else 11.seconds
 	def readDelay = 75.millis
@@ -38,7 +39,9 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 	def isFTDI = true
 	def identity = DualMiner.DM
 
-	var lastJob: Option[Stratum.Job] = None
+	def scryptInit: Seq[Seq[Byte]] = Constants.ltc_init
+	def scryptRestart: Seq[Seq[Byte]] = Constants.ltc_restart
+
 	var goldNonceReceived = false
 
 	val goldNonceRespId = -10
@@ -104,6 +107,9 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 		send(nonceInterface, bin.take(units + 1): _*)
 	}
 
+	def send(cmds: Seq[Byte]*): Unit =
+		send(nonceInterface, cmds: _*)
+
 	def normal: Receive = nonceReceive orElse metricsReceive orElse {
 		case AbstractMiner.CancelWork => self ! StartWork
 		case StartWork =>
@@ -118,46 +124,7 @@ trait DualMinerFacet extends UsbDeviceActor with AbstractMiner
 					startRead()
 			}
 
-		case job: Stratum.Job =>
-			val Work(_, data, midstate, target) = job.work
-
-			lastJob = Some(job)
-
-			self ! MinerMetrics.WorkStarted
-			log.debug("getting work")
-
-			val cmd = if(isScrypt) {
-				require(target.length == 32)
-				require(midstate.length == 32)
-				//require(data.length == 80)
-
-				val dat = ScalaMiner.BufferType.empty ++
-						"55aa1f00".fromHex ++
-						target ++ midstate ++ data.take(80) ++
-						Seq[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte, 0xFF.toByte) ++
-						Seq.fill[Byte](8)(0)
-
-				require(dat.length == 160, dat.length + " != 160")
-
-				dat
-			} else {
-				val obDat = ScalaMiner.BufferType.empty ++ midstate ++ Seq.fill[Byte](20)(0) ++
-						data.drop(64).take(12)
-
-				val dat = ScalaMiner.BufferType.empty ++
-						"55aa0f00".fromHex ++
-						Seq.fill[Byte](4)(0) ++ obDat.take(32) ++
-						obDat.drop(52).take(12)
-
-				require(dat.length == 52, dat.length + " != 52")
-
-				dat
-			}
-
-			if(isScrypt && isDualIface) send(nonceInterface, Constants.ltc_init: _*)
-			else if(isScrypt) send(nonceInterface, Constants.ltc_restart: _*)
-
-			send(nonceInterface, cmd)
+		case job: Stratum.Job => sendWork(job)
 	}
 
 	def postInit() {

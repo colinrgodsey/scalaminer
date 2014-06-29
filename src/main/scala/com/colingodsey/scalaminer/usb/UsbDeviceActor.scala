@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -17,6 +17,7 @@ import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 import akka.actor._
 import com.colingodsey.io.usb.Usb
+import com.colingodsey.scalaminer.utils._
 import akka.io.IO
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.{NonTerminated}
 import com.colingodsey.scalaminer.MinerIdentity
@@ -47,6 +48,7 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def isFTDI: Boolean
 	def readDelay: FiniteDuration
+	def hasSubmittedShare: Boolean
 
 	def defaultTimeout = identity.timeout
 	def minerIdentity: MinerIdentity = identity
@@ -60,7 +62,9 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	def send(interface: Usb.Interface, data: Seq[Byte]*) =
 		/*deviceRef ! Usb.SendBulkTransfer(interface,
 			data.foldLeft(ByteString.empty)(_ ++ _))*/
-		for(x <- data) deviceRef ! Usb.SendBulkTransfer(interface, x)
+		for(x <- data) {
+			deviceRef ! Usb.SendBulkTransfer(interface, x)
+		}
 
 	def waitingOnDevice(after: => Unit): Receive = {
 		case Usb.Connected(`deviceId`, Some(ref)) =>
@@ -69,6 +73,11 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 			context watch ref
 			context.unbecome()
 			unstashAll()
+
+			deviceRef ! Usb.SetConfiguration(identity.config)
+			deviceRef ! Usb.SetIrpTimeout(identity.irpTimeout)
+			deviceRef ! Usb.SetIrpDelay(identity.irpDelay)
+
 			after
 		case Usb.Connected(`deviceId`, None) =>
 			sys.error("no DeviceRef found!")
@@ -85,8 +94,9 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 
 	def failDetect() {
 		log.info("Failed detection for " + identity)
+		if(!hasSubmittedShare)
+			context.parent ! UsbDeviceManager.FailedIdentify(deviceId, identity)
 		context stop self
-		context.parent ! UsbDeviceManager.FailedIdentify(self, identity)
 	}
 
 	abstract override def preStart() {
@@ -98,7 +108,14 @@ trait UsbDeviceActor extends Actor with ActorLogging with Stash {
 	abstract override def postStop() {
 		super.postStop()
 
-		context stop deviceRef
+		//TODO: close, or not close?
+		//make sure this is shorter than the reset time in USBManager
+		val system = context.system
+		context.system.scheduler.scheduleOnce(500.millis) {
+			system stop deviceRef
+		}
+
+		deviceRef ! Usb.SetIrpTimeout(100.millis)
 
 		log.info(s"Stopping $identity at $deviceId")
 	}

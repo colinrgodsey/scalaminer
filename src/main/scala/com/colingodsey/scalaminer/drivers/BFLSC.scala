@@ -1,9 +1,9 @@
 /*
- * scalaminer
+ * ScalaMiner
  * ----------
  * https://github.com/colinrgodsey/scalaminer
  *
- * Copyright (c) 2014 Colin R Godsey <colingodsey.com>
+ * Copyright 2014 Colin R Godsey <colingodsey.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -39,6 +39,7 @@ import com.colingodsey.scalaminer.metrics.{MetricsWorker, MinerMetrics}
 import com.colingodsey.io.usb.{BufferedReader, Usb}
 import com.colingodsey.scalaminer.ScalaMiner.HashType
 import com.colingodsey.scalaminer.usb.UsbDeviceActor.NonTerminated
+import com.typesafe.config.Config
 
 /**
  * Device actor for BFLSC devices. Instead of a request->response style interface,
@@ -68,9 +69,9 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	 */
 	val maxWorkQueue = 20
 	def jobTimeout = 5.minutes
-	def pollDelay = RES_TIME - latency
-	def nonceTimeout = 11.seconds
-	def readDelay = latency
+	def nonceTimeout = 1.minute
+	def readDelay = latency * 1
+	def pollDelay = RES_TIME - readDelay
 	def readSize = BUFSIZ
 	def isFTDI = true
 	override def hashType: HashType = ScalaMiner.SHA256
@@ -276,8 +277,10 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	def init() = getDevice {
 		var lines = Vector.empty[String]
 		var gotIdentity = false
+		var dumpingInput = true
 
 		object PostIrp
+		object PostIrp2
 
 		val lastPurgeIrp = Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex)
 
@@ -292,15 +295,25 @@ class BFLSC(val deviceId: Usb.DeviceId,
 		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
 		deviceRef ! lastPurgeIrp.send
 
-		context become (responseReceive orElse {
+		startRead()
+
+		context become (workReceive orElse ({
 			case GetResults =>
 			case Usb.ControlIrpResponse(`lastPurgeIrp`, _) =>
 				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp)
+				dropBuffer(intf)
+				//send first identity, then just dump all the data
 				send(intf, IDENTIFY.getBytes)
+			case BufferedReader.BufferUpdated(`intf`) if dumpingInput =>
+				dropBuffer(intf)
 			case PostIrp =>
+				dumpingInput = false
+				dropBuffer(intf)
+				send(intf, IDENTIFY.getBytes)
+				context.system.scheduler.scheduleOnce(100.millis, self, PostIrp2)
+			case PostIrp2 =>
 				send(intf, DETAILS.getBytes)
 
-				startRead()
 			case ReceiveLine(line) if !gotIdentity =>
 				gotIdentity = true
 				log.info("Identity " + line)
@@ -323,6 +336,7 @@ class BFLSC(val deviceId: Usb.DeviceId,
 				postInit()
 			case ReceiveLine(line) =>
 				lines :+= line
+		}: Receive) orElse responseReceive orElse {
 			case NonTerminated(_) => stash()
 		})
 	}
@@ -407,6 +421,11 @@ class BFLSC(val deviceId: Usb.DeviceId,
 	}
 
 	override def postStop() {
+		super.postStop()
+
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_TX, controlIndex).send
+		deviceRef ! Usb.ControlIrp(TYPE_OUT, REQUEST_RESET, VALUE_PURGE_RX, controlIndex).send
+
 		pollTimer.cancel()
 		jobTimeoutTimer.cancel()
 	}
@@ -425,7 +444,7 @@ case object BFLSC extends USBDeviceDriver {
 	case object CheckTemp extends BFLSCNonCriticalCommand
 	case class ExpireJobs(set: Set[Seq[Byte]]) extends BFLSCCommand
 
-	val bflTimeout = 100.millis
+	val bflTimeout = 250.millis
 
 	lazy val identities: Set[USBIdentity] = Set(BAS)
 
@@ -502,14 +521,12 @@ case object BFLSC extends USBDeviceDriver {
 		def config = 1
 		def timeout = bflTimeout
 
-		def isMultiCoin = true
-
 		val interfaces = Set(Usb.Interface(0, Set(
 			Usb.InputEndpoint(64, 1, 0),
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BAS)
 	}
@@ -523,14 +540,12 @@ case object BFLSC extends USBDeviceDriver {
 		def config = 1
 		def timeout = bflTimeout
 
-		def isMultiCoin = true
-
 		val interfaces = Set(Usb.Interface(0, Set(
 			Usb.InputEndpoint(64, 1, 0),
 			Usb.OutputEndpoint(64, 2, 0)
 		)))
 
-		override def usbDeviceActorProps(device: Usb.DeviceId,
+		override def usbDeviceActorProps(device: Usb.DeviceId, config: Config,
 				workRefs: Map[ScalaMiner.HashType, ActorRef]): Props =
 			Props(classOf[BFLSC], device, workRefs, BFL)
 	}

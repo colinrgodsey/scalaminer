@@ -107,6 +107,8 @@ out the fine folks at libusb and/or usb4java diagnose the issue.
 * No rules file for Debian/Ubuntu. Should be able to use the same one from
 [cgminer](https://github.com/ckolivas/cgminer/blob/master/01-cgminer.rules) and add your
 devices. Or just run the thing as root.
+* OSX has lots of serial drivers for things, see *OSXDRIVERS.md* for info on unloading these. Some devices
+end up getting used by the HID drivers. There's almost no way around this currently. 
 
 **Credits**
 

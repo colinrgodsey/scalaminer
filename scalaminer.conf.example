@@ -1,0 +1,32 @@
+#com.colingodsey.usb.virtual-host = true
+#com.colingodsey.usb.virtual-hosts = ["akka.tcp://scalaminer@192.168.0.2:3552/user/IO-Usb"]
+
+com.colingodsey.scalaminer {
+    #devices.usb.drivers = [icarus, bitfury]
+
+    #devices.usb.gsd.voltage = false
+    devices.usb.gsd.freq = 1175
+
+    stratum {
+        scrypt {
+            host = "doge.ghash.io"
+            port = 3333
+            user = "colinrgodsey.smscrypt"
+            pass = "x"
+        }
+        sha256 = [
+            {
+                    host = "uk1.ghash.io"
+                    port = 3333
+                    user = "colinrgodsey.smsha256"
+                    pass = "x"
+            },
+            {
+                    host = "us1.ghash.io"
+                    port = 3333
+                    user = "colinrgodsey.smsha256"
+                    pass = "x"
+             }
+        ]
+    }
+}

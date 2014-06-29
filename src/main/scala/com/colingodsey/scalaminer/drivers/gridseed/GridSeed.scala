@@ -220,9 +220,14 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 	def detect() {
 		context become detecting
 		send(intf, resetChips)
-		send(intf, resetChips)
-		send(intf, resetChips)
-		deviceRef ! Usb.SendBulkTransfer(intf, detectBytes, detectId)
+		//send(intf, resetChips)
+		context.system.scheduler.scheduleOnce(100.millis,
+			deviceRef, Usb.SendBulkTransfer(intf, resetChips))
+		//deviceRef ! Usb.SendBulkTransfer(intf, detectBytes, detectId)
+		context.system.scheduler.scheduleOnce(200.millis, deviceRef,
+			Usb.SendBulkTransfer(intf, detectBytes, detectId))
+		context.system.scheduler.scheduleOnce(300.millis, deviceRef,
+			Usb.SendBulkTransfer(intf, detectBytes, detectId))
 	}
 
 	def detected() {
@@ -328,6 +333,7 @@ trait GridSeedMiner extends UsbDeviceActor with AbstractMiner
 		stratumSubscribe(stratumRef)
 
 	}
+
 }
 
 class GridSeedFTDIMiner(val deviceId: Usb.DeviceId, val config: Config,
@@ -376,7 +382,7 @@ class GridSeedSGSMiner(val deviceId: Usb.DeviceId, val config: Config,
 	def identity: USBIdentity = GSD
 	def hashType = ScalaMiner.Scrypt
 	def readDelay = 2.millis
-	def readSize = 0x2000//12 // ?
+	def readSize = 12//0x2000//12 // ?
 
 	override def isFTDI = false
 
@@ -591,8 +597,8 @@ object GSConstants {
 	val detectBytes = "55aac000909090900000000001000000".fromHex
 	val detectRespBytes = "55aac00090909090".fromHex
 	
-	//val resetChips = "55AAC000808080800000000001000000".fromHex
-	val resetChips = "55aac000e0e0e0e00000000001000000".fromHex //from GC3355_USB_Protocol_V1.1_EN.pdf
+	val resetChips = "55AAC000808080800000000001000000".fromHex //cgminer
+	//val resetChips = "55aac000e0e0e0e00000000001000000".fromHex //from GC3355_USB_Protocol_V1.1_EN.pdf
 
 	//used just for dualminer? sha chip gating
 	val disableSha2ForChip = for(i <- 0 until DEFAULT_CHIPS)
@@ -609,7 +615,7 @@ object GSConstants {
 	val commonInitBytes = Seq(
 		"55aac000101010100000000001000000", //reset   maybe need this?
 		"55aac000c0c0c0c00500000001000000", //5chip
-		"55aac000b0b0b0b000c2010001000000", //115200bps baud   do we need this?
+		//"55aac000b0b0b0b000c2010001000000", //115200bps baud   do we need this? what is this?
 		disableSHA2 + "00000000000000000000000000000000", //power down btc units
 		enableSHA2
 	).map(_.fromHex)
